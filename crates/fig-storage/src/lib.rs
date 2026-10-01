@@ -28,11 +28,9 @@ impl Engine {
         };
         let (wal, entries, _) = Wal::open(&opts).map_err(Error::Io)?;
         let mut mem = MemoryKv::new();
-        let mut expect = 0u64;
-        for e in &entries {
+        for (expect, e) in entries.iter().enumerate() {
             // The log is the source of truth; a gap here is a bug, not data.
-            debug_assert_eq!(e.seq, expect, "wal replay gap at seq {expect}");
-            expect += 1;
+            debug_assert_eq!(e.seq, expect as u64, "wal replay gap at seq {expect}");
             match &e.op {
                 WalOp::Put(k, v) => {
                     mem.put(k.clone(), v.clone());
@@ -42,10 +40,7 @@ impl Engine {
                 }
             }
         }
-        tracing::info!(
-            replayed = entries.len(),
-            "storage engine opened"
-        );
+        tracing::info!(replayed = entries.len(), "storage engine opened");
         Ok(Self { wal, mem, cfg })
     }
 
@@ -65,9 +60,7 @@ impl Engine {
     /// Returns true if a live key was removed.
     pub fn delete(&mut self, key: &[u8]) -> Result<bool> {
         self.cfg.check_key(key)?;
-        self.wal
-            .append_delete(key.to_vec())
-            .map_err(Error::Io)?;
+        self.wal.append_delete(key.to_vec()).map_err(Error::Io)?;
         Ok(self.mem.delete(key))
     }
 
