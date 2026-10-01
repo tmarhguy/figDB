@@ -15,6 +15,7 @@ async fn main() -> anyhow::Result<()> {
     let mut dir_arg: Option<String> = None;
     let mut addr = "127.0.0.1:7001".to_string();
     let mut threshold: usize = 4 * 1024 * 1024;
+    let mut compact_interval_ms: u64 = 1000;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -31,9 +32,16 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(2);
                 });
             }
+            "--compact-interval-ms" => {
+                compact_interval_ms =
+                    args.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                        eprintln!("--compact-interval-ms needs a millisecond count (0 disables)");
+                        std::process::exit(2);
+                    });
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: fig-server [--dir DIR] [--addr HOST:PORT] [--flush-threshold BYTES]"
+                    "usage: fig-server [--dir DIR] [--addr HOST:PORT] [--flush-threshold BYTES] [--compact-interval-ms MS]"
                 );
                 return Ok(());
             }
@@ -47,5 +55,5 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("fig-server: {} serving {}", addr, dir.display());
-    fig_server::serve(listener, &dir, threshold).await
+    fig_server::serve(listener, &dir, threshold, compact_interval_ms).await
 }

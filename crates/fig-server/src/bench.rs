@@ -17,7 +17,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 fn usage() -> ! {
     eprintln!(
-        "usage: fig-bench [--addr HOST:PORT] [--n N] [--value-size BYTES] [--sync-every K] [--prefix P] [--verify-only] [--compact]"
+        "usage: fig-bench [--addr HOST:PORT] [--n N] [--value-size BYTES] [--sync-every K] [--prefix P] [--clients C] [--verify-only] [--compact]"
     );
     std::process::exit(2);
 }
@@ -108,15 +108,14 @@ fn percentile(sorted: &[u64], pct: f64) -> u64 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
-fn report(name: &str, lat: &[u64]) {
+fn report(name: &str, lat: &[u64], wall_secs: f64) {
     let mut s = lat.to_vec();
     s.sort_unstable();
     let sum: u128 = s.iter().map(|x| *x as u128).sum();
-    let secs = sum as f64 / 1_000_000.0;
     println!(
-        "{name}: n={} {:.0}/s avg={:.2}ms p50={:.2}ms p99={:.2}ms max={:.2}ms",
+        "{name}: n={} wall={wall_secs:.2}s {:.0}/s wall avg={:.2}ms p50={:.2}ms p99={:.2}ms max={:.2}ms",
         s.len(),
-        s.len() as f64 / secs.max(1e-9),
+        s.len() as f64 / wall_secs.max(1e-9),
         sum as f64 / s.len().max(1) as f64 / 1000.0,
         percentile(&s, 50.0) as f64 / 1000.0,
         percentile(&s, 99.0) as f64 / 1000.0,
@@ -132,6 +131,7 @@ async fn main() {
     let mut value_size: usize = 64;
     let mut sync_every: usize = 500;
     let mut prefix = "bench-".to_string();
+    let mut clients: usize = 1;
     let mut verify_only = false;
     let mut compact = false;
     while let Some(a) = argv.next() {
@@ -153,66 +153,115 @@ async fn main() {
                     .unwrap_or_else(|_| usage());
             }
             "--prefix" => prefix = arg_val(&mut argv, "--prefix"),
+            "--clients" => {
+                clients = arg_val(&mut argv, "--clients")
+                    .parse()
+                    .unwrap_or_else(|_| usage());
+                if clients == 0 {
+                    usage();
+                }
+            }
             "--verify-only" => verify_only = true,
             "--compact" => compact = true,
             "--help" | "-h" => {
-                println!("usage: fig-bench [--addr HOST:PORT] [--n N] [--value-size BYTES] [--sync-every K] [--prefix P] [--verify-only] [--compact]");
+                println!("usage: fig-bench [--addr HOST:PORT] [--n N] [--value-size BYTES] [--sync-every K] [--prefix P] [--clients C] [--verify-only] [--compact]");
                 return;
             }
             _ => usage(),
         }
     }
 
+    // Keys are partitioned by client (strided), so concurrent writers never
+    // share a key and the oracle stays exact per index.
     let mut c = Conn::connect(&addr).await;
     if !verify_only {
         // Write phase: puts are acknowledged only at sync boundaries.
-        let mut lat = Vec::with_capacity(n);
-        for i in 0..n {
-            let body = serde_json::json!({
-                "key_b64": protocol::encode_b64(&key(&prefix, i)),
-                "value_b64": protocol::encode_b64(&value(&prefix, i, value_size)),
-            });
-            let (r, us) = c.timed("put", body).await;
-            if !r.ok {
-                eprintln!("put failed: {r:?}");
-                std::process::exit(1);
-            }
-            lat.push(us);
-            if sync_every > 0 && (i + 1) % sync_every == 0 {
-                let r = c.call("sync", serde_json::json!({})).await;
-                if !r.ok {
-                    eprintln!("sync failed: {r:?}");
-                    std::process::exit(1);
+        let t0 = Instant::now();
+        let mut tasks = Vec::new();
+        for cli in 0..clients {
+            let addr = addr.clone();
+            let prefix = prefix.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut c = Conn::connect(&addr).await;
+                let mut lat = Vec::new();
+                let mut i = cli;
+                while i < n {
+                    let body = serde_json::json!({
+                        "key_b64": protocol::encode_b64(&key(&prefix, i)),
+                        "value_b64": protocol::encode_b64(&value(&prefix, i, value_size)),
+                    });
+                    let (r, us) = c.timed("put", body).await;
+                    if !r.ok {
+                        eprintln!("put failed: {r:?}");
+                        std::process::exit(1);
+                    }
+                    lat.push(us);
+                    i += clients;
                 }
-            }
+                if sync_every > 0 {
+                    let r = c.call("sync", serde_json::json!({})).await;
+                    if !r.ok {
+                        eprintln!("sync failed: {r:?}");
+                        std::process::exit(1);
+                    }
+                }
+                lat
+            }));
+        }
+        let mut lat = Vec::with_capacity(n);
+        for t in tasks {
+            lat.extend(t.await.unwrap());
         }
         let r = c.call("sync", serde_json::json!({})).await;
         assert!(r.ok, "final sync failed: {r:?}");
+        let wall = t0.elapsed().as_secs_f64();
         report(
-            &format!("PUT value_size={value_size} sync_every={sync_every}"),
+            &format!("PUT clients={clients} value_size={value_size}"),
             &lat,
+            wall,
         );
     }
 
     // Read/verify phase: every key must match the recomputed oracle.
-    let mut lat = Vec::with_capacity(n);
-    let mut state = 0x0123_4567_89ab_cdefu64;
-    for _ in 0..n {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        let i = (state % n as u64) as usize;
-        let body = serde_json::json!({"key_b64": protocol::encode_b64(&key(&prefix, i))});
-        let (r, us) = c.timed("get", body).await;
-        if !r.ok {
-            eprintln!("get {prefix}{i:08} failed: {r:?}");
-            std::process::exit(1);
-        }
-        let got = protocol::decode_b64("value", &r.value_b64.unwrap()).unwrap();
-        assert_eq!(got, value(&prefix, i, value_size), "value mismatch at {i}");
-        lat.push(us);
+    let t0 = Instant::now();
+    let mut tasks = Vec::new();
+    for cli in 0..clients {
+        let addr = addr.clone();
+        let prefix = prefix.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut c = Conn::connect(&addr).await;
+            let mut lat = Vec::with_capacity(n / clients + 1);
+            // Disjoint deterministic stream per client (seeded by cli).
+            let mut state = 0x0123_4567_89ab_cdefu64 ^ (cli as u64).wrapping_mul(0x9E37_79B9);
+            let mut done = 0;
+            while done * clients + cli < n {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let i = (state as usize % n.div_ceil(clients)) * clients + cli;
+                if i >= n {
+                    continue;
+                }
+                let body = serde_json::json!({"key_b64": protocol::encode_b64(&key(&prefix, i))});
+                let (r, us) = c.timed("get", body).await;
+                if !r.ok {
+                    eprintln!("get {prefix}{i:08} failed: {r:?}");
+                    std::process::exit(1);
+                }
+                let got = protocol::decode_b64("value", &r.value_b64.unwrap()).unwrap();
+                assert_eq!(got, value(&prefix, i, value_size), "value mismatch at {i}");
+                lat.push(us);
+                done += 1;
+            }
+            lat
+        }));
     }
-    report("GET random", &lat);
+    let mut lat = Vec::with_capacity(n);
+    for t in tasks {
+        lat.extend(t.await.unwrap());
+    }
+    let wall = t0.elapsed().as_secs_f64();
+    report(&format!("GET random clients={clients}"), &lat, wall);
 
     if compact {
         let t0 = Instant::now();

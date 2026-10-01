@@ -5,10 +5,9 @@
 use fig_core::Config;
 use fig_server::protocol::{self, Response};
 use fig_storage::Database;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
 
 fn b64(s: &[u8]) -> String {
     protocol::encode_b64(s)
@@ -57,7 +56,7 @@ fn open_db(dir: &std::path::Path) -> Database {
 async fn spawn_server(db: Database) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let db = Arc::new(Mutex::new(db));
+    let db = Arc::new(RwLock::new(db));
     let h = tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
@@ -209,5 +208,97 @@ async fn binary_keys_roundtrip() {
         .await;
     assert!(r.ok);
     assert_eq!(r.value_b64.unwrap(), b64(&v));
+    srv.abort();
+}
+
+#[tokio::test]
+async fn concurrent_writers_and_readers_stay_correct() {
+    // 8 clients hammer disjoint key ranges at once; every write must land
+    // exactly once and every read must see its own client's values.
+    // (Writers serialize on the write lock; readers share it.)
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, srv) = spawn_server(open_db(dir.path())).await;
+    let mut tasks = Vec::new();
+    for cli in 0u8..8 {
+        tasks.push(tokio::spawn(async move {
+            let mut c = Client::connect(&addr).await;
+            for i in 0..50u8 {
+                let k = vec![cli, i];
+                let v = vec![cli, i, cli.wrapping_add(i)];
+                let r = c
+                    .roundtrip(
+                        serde_json::json!({"seq": 1, "op": "put", "key_b64": b64(&k), "value_b64": b64(&v)}),
+                    )
+                    .await;
+                assert!(r.ok, "client {cli} put {i} failed: {r:?}");
+                // Read-your-own-write through the shared lock.
+                let r = c
+                    .roundtrip(serde_json::json!({"seq": 2, "op": "get", "key_b64": b64(&k)}))
+                    .await;
+                assert!(r.ok, "client {cli} get {i} failed: {r:?}");
+                assert_eq!(r.value_b64.unwrap(), b64(&v));
+            }
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+    // All 400 keys present with exact values.
+    let mut c = Client::connect(&addr).await;
+    let r = c
+        .roundtrip(
+            serde_json::json!({"seq": 3, "op": "scan", "start_b64": b64(&[0x00]), "end_b64": b64(&[0xff, 0xff]), "limit": 1000}),
+        )
+        .await;
+    assert!(r.ok);
+    assert_eq!(r.pairs.unwrap().len(), 400);
+    srv.abort();
+}
+
+#[tokio::test]
+async fn background_compaction_folds_tables_without_manual_compact() {
+    // Full serve() path with a 50 ms timer and a tiny threshold: tables must
+    // fold on their own — no client ever sends `compact`.
+    let dir = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let dir_path = std::path::PathBuf::from(dir.path());
+    let srv = tokio::spawn(async move {
+        let _ = fig_server::serve(listener, &dir_path, 256, 50).await;
+    });
+    // Give the accept loop a moment to bind (connect retries below cover it).
+    let mut c = Client::connect(&addr).await;
+    for i in 0..300usize {
+        let k = vec![(i % 256) as u8, (i / 256) as u8];
+        let r = c
+            .roundtrip(
+                serde_json::json!({"seq": 1, "op": "put", "key_b64": b64(&k), "value_b64": b64(b"value")}),
+            )
+            .await;
+        assert!(r.ok);
+    }
+    // Poll stats until the background task folds the stack (≤8 tables) or a
+    // merge counter proves it ran.
+    let mut folded = false;
+    for _ in 0..100 {
+        let r = c
+            .roundtrip(serde_json::json!({"seq": 2, "op": "stats"}))
+            .await;
+        let s = r.stats.unwrap();
+        if s.tables <= 8 && s.compactions >= 1 {
+            folded = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(folded, "background compaction never folded the stack");
+    // Oracle check: all 300 keys readable after background merges.
+    for i in 0..300usize {
+        let k = vec![(i % 256) as u8, (i / 256) as u8];
+        let r = c
+            .roundtrip(serde_json::json!({"seq": 3, "op": "get", "key_b64": b64(&k)}))
+            .await;
+        assert!(r.ok, "key {i} lost to background merge");
+    }
     srv.abort();
 }
