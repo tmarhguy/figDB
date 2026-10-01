@@ -1,0 +1,15 @@
+[package]
+name = "fig-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fig-core.workspace = true
+fig-wal.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rand.workspace = true
