@@ -39,9 +39,10 @@ transactions — is next, not here. This README describes only what is checked i
 | Crash-safe publishing: `MANIFEST` (tmp→rename→fsync) defines the live table set; orphans/litter reaped at open | [`crates/fig-storage/src/manifest.rs`](crates/fig-storage/src/manifest.rs) | done, tested |
 | Size-tiered compaction: oldest-8 auto-merge, manual full merge, tombstone GC | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (`compact`) | done, tested |
 | TCP server + CLI: JSON-lines `put/get/delete/scan/sync/flush/compact/stats`, base64 values | [`crates/fig-server/src/`](crates/fig-server/src/) | done, tested |
+| Load generator + soak: `fig-bench` (ops/s, p50/p99 over TCP), `scripts/soak.sh` (kill-9 every cycle) | [`crates/fig-server/src/bench.rs`](crates/fig-server/src/bench.rs), [`scripts/soak.sh`](scripts/soak.sh) | done, measured |
 | Shared errors, config limits, tracing bootstrap | [`crates/fig-core/src/`](crates/fig-core/src/error.rs) | done, tested |
 
-Next up: first measured benchmarks (TCP throughput/latency, compaction cost) and a sustained server soak with kill -9 loops.
+Next up: concurrent writers + background compaction (the p99/max column in [benchmarks](docs/benchmarks/README.md) is the reason), then the replication design.
 
 ## Tests (63 passing)
 
