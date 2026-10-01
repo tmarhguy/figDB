@@ -10,3 +10,4 @@ internal.md
 /dashboard/node_modules/
 /dashboard/dist/
 .env
+/log/.obsidian
