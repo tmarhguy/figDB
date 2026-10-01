@@ -20,6 +20,6 @@ every acknowledged write and nothing torn.
 
 ## What is explicitly NOT claimed
 
-- No memtable yet: replay currently yields entries, nothing applies them.
+- The memtable is the replayed log made queryable — nothing more (no SSTables yet).
 - No replication: a disk loss is not survived, only a process crash.
 - No checksums above the WAL frame level.
