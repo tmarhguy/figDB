@@ -28,9 +28,18 @@ pub struct LsmMetrics {
     pub flushed_records: u64,
     /// Table bytes written across all flushes.
     pub flushed_bytes: u64,
+    /// Completed compactions (each merged ≥2 tables into ≤1).
+    pub compactions: u64,
+    /// Input records merged across all compactions.
+    pub compacted_records: u64,
     /// Tables currently open.
     pub tables: usize,
 }
+
+/// Auto-compaction policy: when the stack reaches this many tables, merge the
+/// oldest batch. Bounds read fan-out without a background thread; see ADR-003.
+const COMPACT_THRESHOLD_TABLES: usize = 8;
+const COMPACT_BATCH: usize = 8;
 
 /// One flushed table with its in-memory helpers.
 struct Table {
@@ -329,6 +338,127 @@ impl Database {
             records = meta.records,
             bytes = meta.bytes,
             "flushed memtable to sstable"
+        );
+        // A flush grows the stack by one; fold the oldest batch down when the
+        // fan-out bound is reached. Foreground (not background) on purpose:
+        // no write concurrency exists yet to hide behind, and a stalled write
+        // is observable while a lost write is not.
+        self.maybe_compact()?;
+        Ok(true)
+    }
+
+    /// Compact: flush the memtable, then merge ALL tables into one sorted run,
+    /// garbage-collecting tombstones that shadow nothing. Returns true if a
+    /// merge ran. Crash-safe by the same publish protocol as flush (output
+    /// tmp → rename → manifest swap → delete inputs); see `manifest.rs`.
+    pub fn compact(&mut self) -> Result<bool> {
+        if !self.eng().is_empty() || !self.tombstones.is_empty() {
+            self.flush()?;
+        }
+        if self.tables.len() < 2 {
+            return Ok(false);
+        }
+        // Full merge with an empty memtable: no older layer remains below, so
+        // tombstones whose key has no live value can be dropped entirely.
+        self.merge_tables(self.tables.len(), true)
+    }
+
+    fn maybe_compact(&mut self) -> Result<()> {
+        while self.tables.len() >= COMPACT_THRESHOLD_TABLES {
+            // Partial merge: older tables may still sit below the inputs, so
+            // every tombstone is kept — it may be shadowing them.
+            self.merge_tables(COMPACT_BATCH, false)?;
+        }
+        Ok(())
+    }
+
+    /// Merge the oldest `n` tables into one new sorted run (newest input wins
+    /// per key). Returns true if a merge ran. On any error before the manifest
+    /// swap, in-memory state is untouched and the call is retryable.
+    fn merge_tables(&mut self, n: usize, gc_tombstones: bool) -> Result<bool> {
+        let n = n.min(self.tables.len());
+        if n < 2 {
+            return Ok(false);
+        }
+        let mut merged: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
+        let mut input_records = 0u64;
+        for table in self.tables.iter().take(n) {
+            for rec in table.reader.iter()? {
+                input_records += 1;
+                merged.insert(rec.key, rec.value);
+            }
+        }
+        if gc_tombstones {
+            merged.retain(|_, v| v.is_some());
+        }
+        let input_ids: Vec<u64> = self.tables.iter().take(n).map(|t| t.id).collect();
+
+        // Publish the output before touching the inputs: until the manifest
+        // swap, the output is an unlisted orphan (reaped at open) and the
+        // inputs are the durable copy.
+        let output = if merged.is_empty() {
+            None
+        } else {
+            let id = self.next_table_id;
+            let tmp_path = manifest::table_tmp_path(&self.table_dir, id);
+            let final_path = manifest::table_path(&self.table_dir, id);
+            if tmp_path.exists() {
+                std::fs::remove_file(&tmp_path).map_err(Error::Io)?;
+            }
+            let mut w = SstableWriter::create(&tmp_path, DEFAULT_BLOCK_TARGET)?;
+            for (k, v) in &merged {
+                match v {
+                    Some(value) => w.put(k, value)?,
+                    None => w.delete(k)?,
+                }
+            }
+            let meta = w.finish()?;
+            std::fs::rename(&tmp_path, &final_path).map_err(Error::Io)?;
+            manifest::fsync_dir(&self.table_dir)?;
+            match open_table(id, &final_path) {
+                Ok(t) => {
+                    self.next_table_id += 1;
+                    self.metrics.flushed_bytes += meta.bytes;
+                    Some(t)
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&final_path);
+                    return Err(e);
+                }
+            }
+        };
+
+        // Swap memory first (output holds the oldest data, remaining tables
+        // are newer), then the manifest, then reap the input files. A crash
+        // after the manifest leaves unlisted inputs that open reaps; the data
+        // is already in the output.
+        let mut rest: Vec<Table> = self.tables.drain(n..).collect();
+        let mut tables = Vec::with_capacity(rest.len() + 1);
+        if let Some(t) = output {
+            tables.push(t);
+        }
+        tables.append(&mut rest);
+        self.tables = tables;
+        let live_ids: Vec<u64> = self.tables.iter().map(|t| t.id).collect();
+        manifest::write_manifest(
+            &self.table_dir,
+            &Manifest::new(self.next_table_id, live_ids),
+        )?;
+        for id in &input_ids {
+            let p = manifest::table_path(&self.table_dir, *id);
+            if let Err(e) = std::fs::remove_file(&p) {
+                // Already durable via the output; open reaps stragglers.
+                tracing::warn!(table = id, error = %e, "compact: input deletion failed");
+            }
+        }
+        self.metrics.compactions += 1;
+        self.metrics.compacted_records += input_records;
+        self.metrics.tables = self.tables.len();
+        tracing::info!(
+            inputs = n,
+            records = input_records,
+            tables = self.tables.len(),
+            "compacted tables"
         );
         Ok(true)
     }
