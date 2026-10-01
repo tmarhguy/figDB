@@ -1,0 +1,32 @@
+[package]
+name = "fig-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fig-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "fig-cli"
+path = "src/cli.rs"
+
+[lib]
+name = "fig_server"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+fig-core.workspace = true
+fig-storage.workspace = true
+fig-wal.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

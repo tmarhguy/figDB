@@ -42,4 +42,36 @@ echo "killed writer (pid $CHILD) with SIGKILL"
 tail -n 3 /tmp/fig-crash-child.log || true
 cargo run -q -p fig-storage --example verify_crash -- "$CDIR"
 echo
+echo "=== 4. server over TCP: CLI writes, SIGKILL, restart ==="
+SADDR="127.0.0.1:17071"
+SDIR="/tmp/fig-srv"
+rm -rf "$SDIR"
+cargo build -q -p fig-server
+./target/debug/fig-server --dir "$SDIR" --addr "$SADDR" > /tmp/fig-srv-test.log 2>&1 &
+SRV=$!
+CLI="./target/debug/fig-cli --addr $SADDR"
+for i in $(seq 1 50); do
+  $CLI stats > /dev/null 2>&1 && break
+  sleep 0.1
+done
+$CLI put hello world
+$CLI put foo bar
+$CLI sync
+test "$($CLI get hello)" = "world"
+kill -9 "$SRV" 2>/dev/null || true
+wait "$SRV" 2>/dev/null || true
+echo "killed server (pid $SRV) with SIGKILL"
+./target/debug/fig-server --dir "$SDIR" --addr "$SADDR" > /tmp/fig-srv-test2.log 2>&1 &
+SRV=$!
+for i in $(seq 1 50); do
+  $CLI stats > /dev/null 2>&1 && break
+  sleep 0.1
+done
+test "$($CLI get hello)" = "world"
+test "$($CLI get foo)" = "bar"
+$CLI stats
+kill "$SRV" 2>/dev/null || true
+wait "$SRV" 2>/dev/null || true
+echo "server survived SIGKILL with acked writes intact"
+echo
 echo "ALL REAL TESTS PASSED"
