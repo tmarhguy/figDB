@@ -13,6 +13,7 @@ pub use lsm::{Database, LsmMetrics};
 
 use fig_core::{Config, Error, MemoryKv, Result};
 use fig_wal::{FsyncPolicy, Wal, WalOp, WalOptions};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// A persistent single-node map: every mutation is WAL-appended before it
@@ -21,6 +22,10 @@ pub struct Engine {
     wal: Wal,
     mem: MemoryKv,
     cfg: Config,
+    /// Deletes replayed from the WAL tail at open: keys removed from the
+    /// memtable whose tombstones still shadow older layers. Drained once by
+    /// the LSM; the engine itself never needs them again.
+    replay_tombstones: BTreeSet<Vec<u8>>,
 }
 
 impl Engine {
@@ -34,32 +39,46 @@ impl Engine {
         };
         let (wal, entries, _) = Wal::open(&opts).map_err(Error::Io)?;
         let mut mem = MemoryKv::new();
+        let mut replay_tombstones = BTreeSet::new();
         for (expect, e) in entries.iter().enumerate() {
             // The log is the source of truth; a gap here is a bug, not data.
             debug_assert_eq!(e.seq, expect as u64, "wal replay gap at seq {expect}");
             match &e.op {
                 WalOp::Put(k, v) => {
                     mem.put(k.clone(), v.clone());
+                    replay_tombstones.remove(k);
                 }
                 WalOp::Delete(k) => {
                     mem.delete(k);
+                    replay_tombstones.insert(k.clone());
                 }
             }
         }
         tracing::info!(replayed = entries.len(), "storage engine opened");
-        Ok(Self { wal, mem, cfg })
+        Ok(Self {
+            wal,
+            mem,
+            cfg,
+            replay_tombstones,
+        })
+    }
+
+    /// Take the tombstones replayed at open (empties the set). The LSM seeds
+    /// its pending-tombstone set from this so deletes survive a restart.
+    pub fn take_replay_tombstones(&mut self) -> BTreeSet<Vec<u8>> {
+        std::mem::take(&mut self.replay_tombstones)
     }
 
     /// PUT(key, value): WAL first, memtable second. Durable on return iff the
-    /// fsync policy syncs (or a later `sync()` covers it).
-    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+    /// fsync policy syncs (or a later `sync()` covers it). Returns the
+    /// previous value, if any (needed for exact memtable-size accounting).
+    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<Option<Vec<u8>>> {
         self.cfg.check_key(&key)?;
         self.cfg.check_value(&value)?;
         self.wal
             .append_put(key.clone(), value.clone())
             .map_err(Error::Io)?;
-        self.mem.put(key, value);
-        Ok(())
+        Ok(self.mem.put(key, value))
     }
 
     /// DELETE(key): recorded in the WAL, then removed from the memtable.
@@ -73,6 +92,13 @@ impl Engine {
     /// GET(key).
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         self.mem.get(key)
+    }
+
+    /// Every live pair, ascending. Bounds-free so callers can never
+    /// accidentally clip the key space (a scan range bug once dropped all
+    /// keys starting with 0xFF here).
+    pub fn scan_all(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.mem.iter().collect()
     }
 
     /// SCAN(start, end): ascending pairs with `start <= k < end`.
@@ -126,8 +152,8 @@ mod tests {
         let d = tempdir().unwrap();
         let mut e = engine(d.path());
         assert_eq!(e.get(b"a"), None);
-        e.put(b"a".to_vec(), b"1".to_vec()).unwrap();
-        e.put(b"b".to_vec(), b"2".to_vec()).unwrap();
+        let _ = e.put(b"a".to_vec(), b"1".to_vec()).unwrap();
+        let _ = e.put(b"b".to_vec(), b"2".to_vec()).unwrap();
         assert_eq!(e.get(b"a"), Some(b"1".to_vec()));
         assert!(e.delete(b"a").unwrap());
         assert_eq!(e.get(b"a"), None);
@@ -140,8 +166,8 @@ mod tests {
         let d = tempdir().unwrap();
         {
             let mut e = engine(d.path());
-            e.put(b"k1".to_vec(), b"v1".to_vec()).unwrap();
-            e.put(b"k2".to_vec(), b"v2".to_vec()).unwrap();
+            let _ = e.put(b"k1".to_vec(), b"v1".to_vec()).unwrap();
+            let _ = e.put(b"k2".to_vec(), b"v2".to_vec()).unwrap();
             e.delete(b"k1").unwrap();
         }
         let e = engine(d.path());

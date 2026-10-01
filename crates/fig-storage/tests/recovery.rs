@@ -41,7 +41,7 @@ fn full_scan_of(r: &ReferenceKv) -> Vec<(Vec<u8>, Vec<u8>)> {
 fn apply_engine(e: &mut Engine, op: &Op) -> fig_core::OpResult {
     match op {
         Op::Put { key, value } => {
-            e.put(key.clone(), value.clone()).unwrap();
+            let _ = e.put(key.clone(), value.clone()).unwrap();
             fig_core::OpResult::Put(
                 // Previous value isn't returned by Engine::put; fetch before.
                 // Handled by caller comparing against reference separately.
