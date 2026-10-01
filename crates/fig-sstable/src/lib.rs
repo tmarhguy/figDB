@@ -5,7 +5,9 @@
 //! Deletes are tombstone records; merging layers resolve them.
 
 pub mod format;
+pub mod reader;
 pub mod writer;
 
 pub use format::{IndexEntry, Record};
+pub use reader::SstableReader;
 pub use writer::{SstableMeta, SstableWriter, DEFAULT_BLOCK_TARGET};
