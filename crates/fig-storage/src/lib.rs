@@ -5,6 +5,12 @@
 //! same rule as the WAL, lifted one layer up: the memtable is just the
 //! replayed prefix made queryable.
 
+pub mod bloom;
+pub mod lsm;
+
+pub use bloom::Bloom;
+pub use lsm::{Database, LsmMetrics};
+
 use fig_core::{Config, Error, MemoryKv, Result};
 use fig_wal::{FsyncPolicy, Wal, WalOp, WalOptions};
 use std::path::Path;
