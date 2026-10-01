@@ -113,7 +113,20 @@ impl Database {
         std::fs::create_dir_all(&wal_dir).map_err(Error::Io)?;
         std::fs::create_dir_all(&table_dir).map_err(Error::Io)?;
 
-        let engine = Engine::open(&wal_dir, cfg.clone(), fsync)?;
+        let mut engine = Engine::open(&wal_dir, cfg.clone(), fsync)?;
+        // The WAL tail refills the memtable on open, so the flush accounting
+        // must restart from what replay restored — not from zero. Otherwise
+        // frequent restarts would starve flushing forever, and replayed
+        // deletes would lose the tombstones that shadow older tables.
+        let tombstones = engine.take_replay_tombstones();
+        // Same units as the write path: live pairs plus one tombstone
+        // record (key + op byte) per pending delete.
+        let mem_bytes: usize = engine
+            .scan_all()
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum::<usize>()
+            + tombstones.iter().map(|k| k.len() + 1).sum::<usize>();
         let mut tables = Vec::new();
         let mut next_table_id = 0u64;
         for (id, path) in list_tables(&table_dir)? {
@@ -125,8 +138,8 @@ impl Database {
             table_dir,
             engine: Some(engine),
             tables,
-            tombstones: BTreeSet::new(),
-            mem_bytes: 0,
+            tombstones,
+            mem_bytes,
             flush_threshold: flush_threshold.max(1),
             metrics: LsmMetrics::default(),
             next_table_id,
@@ -145,19 +158,46 @@ impl Database {
         self.engine.as_mut().expect("engine present outside flush")
     }
 
-    /// PUT(key, value).
+    /// PUT(key, value). Live memtable bytes are accounted net: overwrites
+    /// replace, so only the delta counts toward the flush threshold.
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.mem_bytes += key.len() + value.len();
-        self.eng_mut().put(key.clone(), value)?;
-        self.tombstones.remove(&key);
+        let prev = self.eng().get(&key);
+        self.eng_mut().put(key.clone(), value.clone())?;
+        match prev {
+            Some(old) => {
+                self.mem_bytes = self
+                    .mem_bytes
+                    .saturating_add(value.len())
+                    .saturating_sub(old.len());
+            }
+            None => {
+                self.mem_bytes = self.mem_bytes.saturating_add(key.len() + value.len());
+                if self.tombstones.remove(&key) {
+                    self.mem_bytes = self.mem_bytes.saturating_sub(key.len() + 1);
+                }
+            }
+        }
         self.maybe_flush()
     }
 
-    /// DELETE(key). Returns true if a live key was removed from the memtable
+    /// DELETE(key). Live bytes drop by the removed pair; the tombstone itself
+    /// costs key bytes until the next flush carries it to a table.
+    /// Returns true if a live key was removed from the memtable
     /// (false does NOT mean absent — older tables may still hold it).
     pub fn delete(&mut self, key: &[u8]) -> Result<bool> {
-        self.mem_bytes += key.len() + 1;
+        let old = self.eng().get(key);
         let removed = self.eng_mut().delete(key)?;
+        match old {
+            Some(v) => {
+                self.mem_bytes = self
+                    .mem_bytes
+                    .saturating_sub(key.len() + v.len())
+                    .saturating_add(key.len() + 1);
+            }
+            None => {
+                self.mem_bytes = self.mem_bytes.saturating_add(key.len() + 1);
+            }
+        }
         self.tombstones.insert(key.to_vec());
         self.maybe_flush()?;
         Ok(removed)
@@ -195,7 +235,7 @@ impl Database {
                 merged.insert(rec.key, rec.value);
             }
         }
-        for (k, v) in self.eng().scan(&[0x00], &[0xff])? {
+        for (k, v) in self.eng().scan_all() {
             merged.insert(k, Some(v));
         }
         for k in &self.tombstones {
@@ -220,7 +260,7 @@ impl Database {
             return Ok(false);
         }
         let mut merged: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
-        for (k, v) in self.eng().scan(&[0x00], &[0xff])? {
+        for (k, v) in self.eng().scan_all() {
             merged.insert(k, Some(v));
         }
         for k in &self.tombstones {
