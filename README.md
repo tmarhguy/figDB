@@ -110,6 +110,15 @@ scripts/real_test.sh    real proof: HashMap harness + kill -9 + server restart
 .github/workflows/     ci.yml mirrors check.sh, plus the WAL crash gate
 ```
 
+## Documentation
+
+Detailed architecture, implementation, verification, and technical
+documentation is available in the project documentation.
+
+Build it locally with `make docs` (requires
+[Asciidoctor](https://asciidoctor.org/); output goes to `build/docs/`),
+or read the GitHub Pages deployment of this repository.
+
 ## Documentation and history
 
 Start with [`docs/README.md`](docs/README.md). Important decisions get an ADR
