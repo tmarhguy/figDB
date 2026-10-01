@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/fig-core",
+    "crates/fig-sstable",
     "crates/fig-storage",
     "crates/fig-wal",
 ]
