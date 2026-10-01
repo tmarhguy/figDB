@@ -104,6 +104,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fig-raft"
+version = "0.1.0"
+dependencies = [
+ "fig-core",
+ "rand 0.8.8",
+ "serde",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "fig-server"
 version = "0.1.0"
 dependencies = [

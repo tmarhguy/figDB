@@ -9,5 +9,6 @@ Decisions so far:
 - `003-compaction-policy.md` — size-tiered oldest-batch merge; tombstone GC on full merges.
 - `004-tcp-server-protocol.md` — single-node TCP server, JSON-lines, base64 values.
 - `005-concurrency-model.md` — snapshot reads, RwLock, background compaction.
+- `006-raft-replication.md` — static-cluster Raft in R1/R2/R3 layers, simulation first.
 
 Template: `000-template.md`. Numbering is sequential; never reuse numbers.
