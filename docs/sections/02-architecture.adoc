@@ -1,0 +1,64 @@
+[[sec-architecture]]
+== Architecture
+
+This chapter describes the system topology, the implemented components,
+and the write lifecycle vocabulary used everywhere else in this manual.
+
+=== System topology
+
+The target topology is a sharded, replicated store. Only the bottom of
+the storage engine exists today: it runs as a single-node process built
+from the layers in <<tab-components>>.
+
+.Target write path (only the storage-engine boxes exist today).
+----
+CLIENTS -> RPC/API -> Router -> Txn Coordinator -> Shard Directory
+  -> SHARD A/B/C -> Raft Group (N1 N2 N3)
+  -> Storage Engine (WAL -> Memtable -> SSTables)
+----
+
+[[fig-write-path]]
+.Write path of the implemented single node.
+image::write-path.svg[Implemented write path,600,align="center"]
+
+=== Components
+
+[[tab-components]]
+.Implemented components and their crates.
+[cols="1,2,2",options="header"]
+|===
+|Component |Crate |Responsibility
+
+|Ordered KV model
+|`fig-core`
+|In-memory `GET` / `PUT` / `DELETE` / `SCAN` over bytes; oracle and limits
+
+|Write-ahead log
+|`fig-wal`
+|Framed, checksummed records; segments; replay; crash recovery
+
+|Storage engine
+|`fig-storage`
+|WAL-backed memtable; flush; manifest publishing; compaction; merged reads
+
+|Immutable tables
+|`fig-sstable`
+|Checksummed blocks, index, footer, Bloom filters, tombstones
+
+|Server and CLI
+|`fig-server`
+|TCP JSON-lines API; snapshot reads; background compaction timer
+|===
+
+=== Write lifecycle vocabulary
+
+The following terms are never conflated in this manual:
+
+----
+received -> replicated -> committed -> persisted -> applied -> acknowledged
+----
+
+There is no replication yet, so the only acknowledgement point is
+`Wal::sync()`: everything at or before the last sync survives a crash.
+The exact rule is stated in `architecture/durability.md` and summarized
+in <<sec-design>>.

@@ -1,0 +1,21 @@
+[[sec-limitations]]
+== Known Limitations
+
+This chapter lists what the system explicitly does not do yet. It exists
+so no reader infers guarantees from the chapters above.
+
+* No replication: a disk loss is not survived, only a process crash.
+* Single node only: no shards, no Raft groups, no distributed transactions.
+* No power-loss testing: `kill -9` exercises page-cache-survives crashes;
+  unsynced-tail loss is covered by truncation simulation, not by pulling
+  the plug.
+* No fsync-per-write figures: published runs batch syncs.
+* Checksums exist at the WAL frame level; there are no checksums above it.
+* Benchmarks are loopback-only with a small client count; there are no
+  multi-host latency claims.
+
+WARNING: Do not deploy this system where disk loss or multi-node
+consistency is required. The replication design is next; it is not here.
+
+When a limitation above is fixed, update this chapter, the affected design
+chapter, and the corresponding decision record in the same commit.

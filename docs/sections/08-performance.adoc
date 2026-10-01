@@ -1,0 +1,38 @@
+[[sec-performance]]
+== Performance
+
+This chapter explains how performance is measured and what the current
+numbers show. Measured results live in `benchmarks/`; this chapter states
+the method and the interpretation so numbers are never read out of context.
+
+=== Method
+
+All runs use `fig-bench` (per-operation latency in microseconds, p50/p99
+over the full run) against a local server with a stated durability policy
+(for example, an explicit `sync` every 500 puts, so every measured put is
+acknowledged). Hardware, compiler, dataset, and durability policy are
+recorded with each run because throughput is meaningless without them.
+
+Throughput and latency are related by the offered load. For a single
+sequential client over `n` operations with mean latency stem:[E[L]]:
+
+[stem]
+++++
+T = \frac{n}{\sum_i L_i} = \frac{1}{E[L]}
+++++
+
+With concurrent clients the wall-clock form applies instead
+(stem:[T = n / T_{wall}]), which is why single-client and multi-client
+figures are reported separately in `benchmarks/`.
+
+=== Reading the results
+
+* `GET` throughput is typically round-trip bound; compiler optimization
+  level moves it little.
+* `PUT` throughput is execution bound (flush and compaction rewrites), so
+  release optimization and moving merges off the write path dominate.
+* Foreground merges stall writes visibly in p99/max; background compaction
+  trades that tail for steady throughput.
+
+NOTE: Concurrency figures are loopback-only unless stated otherwise, and
+no power-loss testing is claimed. See <<sec-limitations>>.

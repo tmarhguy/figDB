@@ -1,0 +1,59 @@
+[[sec-design]]
+== Design
+
+This chapter records the per-component design: what each layer stores,
+what it promises, and where the crash windows are.
+
+=== Write-ahead log
+
+The log is a sequence of framed records carrying dense sequence numbers.
+Each frame carries a checksum. Replay reads a prefix:
+
+* a clean prefix replays fully,
+* a torn tail (short read) is truncated and never replays,
+* a corrupt frame stops replay; the suffix is truncated.
+
+[source,rust]
+----
+pub fn append(&mut self, payload: &[u8]) -> Result<SeqNo>;
+pub fn sync(&mut self) -> Result<SyncPoint>;
+pub fn replay(prefix: &Path) -> Result<Vec<Record>>;
+----
+
+NOTE: Sequence numbers stay dense across reopen and rotation, so no write
+is ever replayed twice or skipped.
+
+=== Memtable engine
+
+The engine applies `PUT` to the WAL first, then to the in-memory table.
+Restart replays the log into a fresh table. Rejected writes leave no trace.
+
+==== Flush and manifest publishing
+
+The live table set is defined by `tables/MANIFEST`, not the directory
+listing. Flush publishes in order: write `sst-{id}.sst.tmp`, sync,
+rename, directory fsync, update `MANIFEST` (tmp, sync, rename, directory
+fsync), then delete WAL segments.
+
+==== Crash windows
+
+* Crash before rename: only `*.tmp` litter, deleted at open.
+* Crash after rename, before manifest: unlisted orphan `.sst`, deleted at
+  open; the WAL still holds the data.
+* Crash after manifest, before WAL deletion: table and WAL overlap as
+  harmless duplicates; the next flush clears the WAL.
+
+WARNING: Never treat the directory listing as the live set. An unlisted
+`.sst` file is either litter or an orphan and must be reaped, never merged
+into reads.
+
+=== SSTables and compaction
+
+Tables are immutable: checksummed blocks, an index, a footer, per-table
+Bloom filters, and tombstones for deletes. Compaction merges the oldest
+batch of tables with the same publish protocol as flush, so its crash
+windows reduce to the flush cases above.
+
+Tombstone garbage collection runs only on full merges with an empty
+memtable, where no older layer can exist below a dropped tombstone, so a
+dropped tombstone can never resurrect a shadowed key.

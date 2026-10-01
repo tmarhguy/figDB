@@ -1,0 +1,45 @@
+[[sec-programming-model]]
+== Programming Model
+
+This chapter shows how client code uses the interfaces from
+<<sec-interfaces>>: the basic write/read cycle, error handling, and the
+durability contract in practice.
+
+=== Basic write/read cycle
+
+. Connect to the server over TCP.
+. Send `put` requests, one JSON object per line (values base64 encoded).
+. Send `sync` to acknowledge the staged prefix.
+. Send `get` or `scan` to read from a snapshot.
+
+[source,json]
+----
+{"op":"put","key":"a2V5MQ==","value":"dmFsdWUx"}
+{"op":"sync"}
+{"op":"get","key":"a2V5MQ=="}
+----
+
+A minimal shell session against a local server:
+
+[source,bash]
+----
+printf '%s\n' \
+  '{"op":"put","key":"a2V5MQ==","value":"dmFsdWUx"}' \
+  '{"op":"sync"}' \
+  '{"op":"get","key":"a2V5MQ=="}' | nc 127.0.0.1 7000
+----
+
+=== Errors
+
+All failures use shared error kinds (`fig-core::Error`): invalid input,
+limit violations, I/O failures, and corruption. Corruption is fail-safe:
+replay stops at the first corrupt frame and truncates the suffix rather
+than surfacing torn data.
+
+=== Durability contract
+
+`sync` is the only acknowledgement point. In application terms:
+
+* writes before the last successful `sync` response survive a crash,
+* writes after it may be lost,
+* reads always observe a consistent snapshot of the acknowledged prefix.

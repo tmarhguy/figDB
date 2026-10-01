@@ -1,0 +1,34 @@
+[[sec-implementation]]
+== Implementation
+
+This chapter covers the repository layout, the build, and the continuous
+integration gates.
+
+=== Repository layout
+
+[source,text]
+----
+crates/fig-core/     errors, config/limits, KV oracle, tracing
+crates/fig-wal/      the log (record / segment / wal) + crash tests
+crates/fig-storage/  memtable engine + LSM flush/merge + equivalence gates
+crates/fig-sstable/  immutable tables + indexed reads + differential tests
+crates/fig-server/   TCP JSON-lines server + fig-cli + wire tests
+docs/                manual source (this system) + existing Markdown notes
+scripts/check.sh     local gate: fmt + clippy + tests
+----
+
+=== Building and testing
+
+[source,bash]
+----
+cargo build --workspace          # debug build of all crates
+cargo test --workspace          # full test suite
+./scripts/check.sh               # canonical gate: fmt + clippy + tests
+make docs                        # build this manual into build/docs/
+----
+
+Release builds use link-time optimization (`[profile.release]`, single
+codegen unit); see `benchmarks/` for measured release-vs-debug comparisons.
+
+TIP: Run `./scripts/check.sh` before every push. CI mirrors it, plus the
+dedicated WAL crash gate.

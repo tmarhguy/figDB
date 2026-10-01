@@ -1,0 +1,58 @@
+[[sec-introduction]]
+== Introduction
+
+This chapter states what the system is, what this manual covers, and how
+to navigate the rest of the documentation.
+
+=== Purpose and scope
+
+The system under documentation is an ordered, persistent key-value store
+with crash-safe durability semantics. This manual describes its
+architecture, component design, external interfaces, verification strategy,
+build process, measured performance, and known limitations.
+
+This manual describes the system as checked in. Statements about future
+work (replication, transactions, sharding) are marked as such and are not
+part of the implemented behavior. See <<sec-limitations>> for the explicit
+list of what is not claimed.
+
+=== How to read this manual
+
+* Engineers new to the project: read <<sec-introduction>> and
+  <<sec-architecture>> first, then the chapter relevant to your task.
+* Operators: <<sec-interfaces>>, <<sec-implementation>>, and
+  <<sec-limitations>> are the most relevant chapters.
+* Contributors: <<sec-verification>> defines what "proven correct" means
+  here, and <<sec-implementation>> defines the local build and test gates.
+
+The recommended reading order is:
+
+. Start with the architecture overview (<<sec-architecture>>).
+. Drill into component design (<<sec-design>>) as needed.
+. Consult interfaces (<<sec-interfaces>>) and the programming model
+  (<<sec-programming-model>>) when writing client code.
+. Check verification (<<sec-verification>>) before changing storage logic.
+
+=== Conventions
+
+Key terms used throughout this manual:
+
+* _Acknowledged_ -- a write the system promises to survive a crash.
+* _Prefix_ -- the initial contiguous run of a log; recovery replays a prefix.
+* _Litter_ -- files left behind by a crash that recovery must ignore or reap.
+
+NOTE: When prose and code disagree, the code plus its tests win until the
+documentation is updated in the same milestone.
+
+=== Related documents
+
+The Markdown files already in this repository remain the canonical prose
+record. This manual summarizes them and links to them:
+
+* `architecture/overview.md` -- system topology and write lifecycle
+* `architecture/durability.md` -- acknowledgement rule and crash windows
+* `architecture/consistency.md` -- isolation target and validation
+* `adr/` -- architecture decision records
+* `correctness/strategy.md` -- reference models and testing strategy
+* `testing/strategy.md` -- simulator, chaos, soak, and CI split
+* `benchmarks/` -- measured results only

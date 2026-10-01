@@ -1,0 +1,54 @@
+[[sec-verification]]
+== Verification
+
+This chapter defines what "proven correct" means: reference models,
+differential tests on randomized operation streams, crash gates, and the
+continuous gates that enforce them.
+
+=== Strategy
+
+Reference models are compared against the implementation on seeded random
+operation streams: the naive oracle must agree with the real structure on
+every `get` and `scan`, including tombstone behavior. Crash tests plant
+failures at every publish window and assert that reopen yields exactly the
+acknowledged state.
+
+NOTE: Randomized gates use fixed seeds so failures reproduce deterministically.
+
+=== Test gates
+
+[[tab-gates]]
+.Enforcement gates (unit tests live next to the code; crash tests in `tests/`).
+[cols="2,3",options="header"]
+|===
+|Location |What it proves
+
+|`fig-core`: `kv`, `ops`
+|Roundtrip, ordering, scan bounds; oracle agreement up to 10k ops
+
+|`fig-wal`: `record`, `segment`, `wal`
+|Frame roundtrip; torn tails read as torn; dense seqnos across reopen
+
+|`fig-wal/tests/crash.rs`
+|Acked prefix survives seeded crash campaigns; corruption truncates suffix
+
+|`fig-storage`, `fig-sstable`
+|Replay, flush, tombstone suppression, Bloom behavior, manifest roundtrips
+
+|`fig-storage/tests/`
+|Kill/restart, mid-flush litter, and compaction windows reopen clean
+
+|`fig-server/tests/tcp.rs`
+|Wire roundtrip, garbage-input survival, restart durability, concurrency
+|===
+
+The local gate runs everything:
+
+[source,bash]
+----
+./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
+----
+
+WARNING: Storage logic changes must update the corresponding gate in the
+same commit. A passing build with a weakened oracle is a regression, not
+an improvement.
