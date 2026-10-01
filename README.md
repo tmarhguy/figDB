@@ -4,7 +4,7 @@
 <p align="center">
   <a href="https://github.com/tmarhguy/fig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tmarhguy/fig/actions/workflows/ci.yml/badge.svg"></a>
   <a href="docs/README.md"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-2ea043"></a>
-  <a href="#tests-37-passing"><img alt="Tests: 37 passing" src="https://img.shields.io/badge/tests-37%20passing-2ea043"></a>
+  <a href="#tests-45-passing"><img alt="Tests: 45 passing" src="https://img.shields.io/badge/tests-45%20passing-2ea043"></a>
   <a href="#license-and-author"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-990000"></a>
 </p>
 
@@ -14,8 +14,9 @@ engine. No RocksDB, no etcd, no Raft library.
 
 Honest status: four crates exist. An ordered in-memory KV model with a
 differential-test oracle, a checksummed write-ahead log with crash tests, a
-WAL-backed memtable engine with kill/restart tests, and immutable SSTables
-with indexed lookup. Everything above that — flushing, compaction, Raft,
+WAL-backed memtable engine with kill/restart tests, immutable SSTables with
+indexed lookup, and an LSM database that flushes the memtable into Bloom-
+checked tables with merged reads. Everything above that — compaction, Raft,
 transactions — is next, not here. This README describes only what is checked in.
 
 **Explore:** [architecture](docs/architecture/overview.md) ·
@@ -34,11 +35,12 @@ transactions — is next, not here. This README describes only what is checked i
 | Checksummed WAL: framed records, seqnos, segments, replay, torn-tail vs corruption recovery | [`crates/fig-wal/src/`](crates/fig-wal/src/) | done, tested |
 | WAL-backed memtable (`Engine`): `PUT → WAL → memtable`, `restart → replay` | [`crates/fig-storage/src/lib.rs`](crates/fig-storage/src/lib.rs) | done, tested |
 | Immutable SSTables: checksummed blocks, index, footer, tombstones | [`crates/fig-sstable/src/`](crates/fig-sstable/src/) | done, tested |
+| LSM database: threshold flushing, Bloom filters, merged reads, metrics | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) | done, tested |
 | Shared errors, config limits, tracing bootstrap | [`crates/fig-core/src/`](crates/fig-core/src/error.rs) | done, tested |
 
-Next up: flushing the memtable into SSTables, with Bloom filters so absent keys stay cheap.
+Next up: compaction — merging overlapping tables, garbage-collecting tombstones, so reads stop fanning out.
 
-## Tests (37 passing)
+## Tests (45 passing)
 
 Tests live next to the code — unit tests in `src/` files, crash tests in
 `tests/`. CI runs all of this on every push
@@ -58,6 +60,9 @@ Tests live next to the code — unit tests in `src/` files, crash tests in
 | [`crates/fig-sstable/src/writer.rs`](crates/fig-sstable/src/writer.rs) (3 tests) | Out-of-order keys rejected, no overwrite, empty table finishes |
 | [`crates/fig-sstable/src/reader.rs`](crates/fig-sstable/src/reader.rs) (3 tests) | Get/scan/iter agree with tombstone suppression; garbage and bit flips fail safely |
 | [`crates/fig-sstable/tests/sstable.rs`](crates/fig-sstable/tests/sstable.rs) (2 tests) | 20 seeded streams match the oracle on gets, scans, tombstones |
+| [`crates/fig-storage/src/bloom.rs`](crates/fig-storage/src/bloom.rs) (3 tests) | No false negatives; false-positive rate under target |
+| [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (3 tests) | Flush moves reads to tables; deletes shadow older tables; empty flush is a noop |
+| [`crates/fig-storage/tests/lsm.rs`](crates/fig-storage/tests/lsm.rs) (2 tests) | Wide-key workloads match the oracle across flushes, kills, restarts |
 
 Run everything:
 
@@ -87,7 +92,7 @@ corrupt frames stop and truncate replay, sequence numbers stay dense. Details:
 ```text
 crates/fig-core/    errors, config/limits, KV oracle, tracing
 crates/fig-wal/     the log (record / segment / wal) + crash tests
-crates/fig-storage/ WAL-backed memtable engine + kill/restart tests
+crates/fig-storage/ memtable engine + LSM flush/merge + equivalence gates
 crates/fig-sstable/ immutable tables + indexed reads + differential tests
 docs/                   architecture, ADRs, correctness, benchmarks, testing
 scripts/check.sh        local gate: fmt + clippy + tests
