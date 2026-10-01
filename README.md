@@ -4,7 +4,7 @@
 <p align="center">
   <a href="https://github.com/tmarhguy/fig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tmarhguy/fig/actions/workflows/ci.yml/badge.svg"></a>
   <a href="docs/README.md"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-2ea043"></a>
-  <a href="#tests-45-passing"><img alt="Tests: 45 passing" src="https://img.shields.io/badge/tests-45%20passing-2ea043"></a>
+  <a href="#tests-59-passing"><img alt="Tests: 59 passing" src="https://img.shields.io/badge/tests-59%20passing-2ea043"></a>
   <a href="#license-and-author"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-990000"></a>
 </p>
 
@@ -36,11 +36,13 @@ transactions — is next, not here. This README describes only what is checked i
 | WAL-backed memtable (`Engine`): `PUT → WAL → memtable`, `restart → replay` | [`crates/fig-storage/src/lib.rs`](crates/fig-storage/src/lib.rs) | done, tested |
 | Immutable SSTables: checksummed blocks, index, footer, tombstones | [`crates/fig-sstable/src/`](crates/fig-sstable/src/) | done, tested |
 | LSM database: threshold flushing, Bloom filters, merged reads, metrics | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) | done, tested |
+| Crash-safe publishing: `MANIFEST` (tmp→rename→fsync) defines the live table set; orphans/litter reaped at open | [`crates/fig-storage/src/manifest.rs`](crates/fig-storage/src/manifest.rs) | done, tested |
+| Size-tiered compaction: oldest-8 auto-merge, manual full merge, tombstone GC | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (`compact`) | done, tested |
 | Shared errors, config limits, tracing bootstrap | [`crates/fig-core/src/`](crates/fig-core/src/error.rs) | done, tested |
 
-Next up: compaction — merging overlapping tables, garbage-collecting tombstones, so reads stop fanning out.
+Next up: the server — a TCP + JSON-lines `fig-server` crate and `fig-cli`, so the database runs as a process you can talk to over the network.
 
-## Tests (45 passing)
+## Tests (59 passing)
 
 Tests live next to the code — unit tests in `src/` files, crash tests in
 `tests/`. CI runs all of this on every push
@@ -62,7 +64,10 @@ Tests live next to the code — unit tests in `src/` files, crash tests in
 | [`crates/fig-sstable/tests/sstable.rs`](crates/fig-sstable/tests/sstable.rs) (2 tests) | 20 seeded streams match the oracle on gets, scans, tombstones |
 | [`crates/fig-storage/src/bloom.rs`](crates/fig-storage/src/bloom.rs) (3 tests) | No false negatives; false-positive rate under target |
 | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (3 tests) | Flush moves reads to tables; deletes shadow older tables; empty flush is a noop |
+| [`crates/fig-storage/src/manifest.rs`](crates/fig-storage/src/manifest.rs) (5 tests) | Manifest roundtrips; staging litter reaped; unlisted tables removed; corrupt manifest is `Corruption` |
 | [`crates/fig-storage/tests/lsm.rs`](crates/fig-storage/tests/lsm.rs) (2 tests) | Wide-key workloads match the oracle across flushes, kills, restarts |
+| [`crates/fig-storage/tests/crash_mid_flush.rs`](crates/fig-storage/tests/crash_mid_flush.rs) (4 tests) | SIGKILL litter at each flush window reopens clean; unlisted tables never leak; legacy dirs adopted |
+| [`crates/fig-storage/tests/compaction.rs`](crates/fig-storage/tests/compaction.rs) (5 tests) | Random compact/write/kill streams match the oracle; full-merge GC reclaims files; auto-policy bounds tables at 8; both compact crash windows reopen clean |
 
 Run everything:
 
