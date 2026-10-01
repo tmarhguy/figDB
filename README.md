@@ -4,177 +4,94 @@
 <p align="center">
   <a href="https://github.com/tmarhguy/fig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tmarhguy/fig/actions/workflows/ci.yml/badge.svg"></a>
   <a href="docs/README.md"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-2ea043"></a>
-  <a href="docs/architecture/overview.md"><img alt="Consensus: custom Raft" src="https://img.shields.io/badge/consensus-custom%20Raft-011F5B"></a>
-  <a href="docs/architecture/overview.md"><img alt="Storage: LSM from scratch" src="https://img.shields.io/badge/storage-LSM%20from%20scratch-011F5B"></a>
+  <a href="#tests-21-passing"><img alt="Tests: 21 passing" src="https://img.shields.io/badge/tests-21%20passing-2ea043"></a>
   <a href="#license-and-author"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-990000"></a>
 </p>
 
-FigDB is one database expressed at several layers:
+FigDB is a database built the hard way: its storage, consensus, and
+transaction mechanisms are implemented directly, not delegated to an embedded
+engine. No RocksDB, no etcd, no Raft library.
 
-- a crash-consistent **LSM storage engine from first principles** — WAL,
-  memtables, SSTables, Bloom filters, block cache, background compaction;
-- **custom Raft consensus** with replicated state machines, leader election,
-  snapshots, and online replica recovery — no etcd, no Raft library;
-- **serializable MVCC transactions**, single-shard first, then atomic
-  cross-shard coordination;
-- range-partitioned **sharding** with routing, splitting, and rebalancing;
-- a **deterministic distributed simulator** (`fig-sim --seed N`) that
-  reproduces crashes, partitions, and storage faults exactly;
-- chaos, fuzzing, linearizability checks, benchmarks, and a React/TypeScript
-  operations console with interactive failure demos.
-
-The ordered in-memory KV model and its differential-test oracle are real and
-checked in. The WAL is in progress. Everything after that is roadmap with
-reserved crate boundaries — not running code. This README never claims numbers
-or guarantees FigDB has not yet measured and implemented.
+Honest status: two crates exist. An ordered in-memory KV model with a
+differential-test oracle, and a checksummed write-ahead log with crash tests.
+Everything above that — memtable, SSTables, Raft, transactions — is next, not
+here. This README describes only what is checked in.
 
 **Explore:** [architecture](docs/architecture/overview.md) ·
 [durability](docs/architecture/durability.md) ·
 [consistency](docs/architecture/consistency.md) ·
-[correctness strategy](docs/correctness/strategy.md) ·
-[benchmarks](docs/benchmarks/README.md) ·
+[correctness](docs/correctness/strategy.md) ·
 [testing](docs/testing/strategy.md) ·
-[ADRs](docs/adr/README.md) ·
-[RPC contract](proto/fig.proto)
+[ADRs](docs/adr/README.md)
 
-## Architecture at a glance
+## What's real
 
-```text
-CLIENTS → Client Library → RPC/API → Router → Txn Coordinator → Shard Directory
-  → SHARD A/B/C → Raft Group (N1 N2 N3) → Storage Engine (WAL → Memtable → SSTables)
-```
+| Piece | Where | State |
+|---|---|---|
+| Ordered KV model (`MemoryKv`: GET/PUT/DELETE/SCAN over bytes) | [`crates/fig-core/src/kv.rs`](crates/fig-core/src/kv.rs) | done, tested |
+| Naive oracle (`ReferenceKv`) + seeded operation streams | [`crates/fig-core/src/reference.rs`](crates/fig-core/src/reference.rs), [`ops.rs`](crates/fig-core/src/ops.rs) | done, tested |
+| Checksummed WAL: framed records, seqnos, segments, replay, torn-tail vs corruption recovery | [`crates/fig-wal/src/`](crates/fig-wal/src/) | done, tested |
+| Shared errors, config limits, tracing bootstrap | [`crates/fig-core/src/`](crates/fig-core/src/error.rs) | done, tested |
 
-### One write, six distinct stages
+Next up: a WAL-backed memtable, so `restart → WAL replay` yields a live map.
 
-```text
-received → replicated → committed → persisted → applied → acknowledged
-```
+## Tests (21 passing)
 
-These are never conflated. A write is acknowledged only after the documented
-durability mode is satisfied — WAL-synced single-node first, Raft-quorum
-committed once replication lands. See
-[durability](docs/architecture/durability.md).
+Tests live next to the code — unit tests in `src/` files, crash tests in
+`tests/`. CI runs all of this on every push
+([workflow](.github/workflows/ci.yml)).
 
-### Public API
-
-`GET / PUT / DELETE / SCAN`, `BATCH_GET / BATCH_WRITE / CAS / PREFIX_SCAN`,
-transactions `BEGIN / TXN_GET / TXN_PUT / TXN_DELETE / COMMIT / ABORT`,
-admin `CLUSTER_STATUS / NODE_STATUS / SHARD_STATUS / METRICS`.
-Keys and values are arbitrary bytes subject to enforced limits
-(`fig-core::Config::Limits`).
-
-## What runs now
-
-| Layer | Current, repository-backed statement |
+| File | What it proves |
 |---|---|
-| Workspace | 14-crate Rust workspace, CI (fmt/clippy/unit/integration), structured tracing, enforced config limits |
-| KV model | Ordered `MemoryKv` (BTreeMap) + naive `ReferenceKv` oracle + seeded differential streams; 12 tests green |
-| WAL | Framed CRC-32 records, sequence numbers, segment rotation, torn-tail vs corruption recovery — **in progress, uncommitted** |
-| Memtable/LSM/SSTables | Reserved crates only; land in Commits 04–08 |
-| Raft/simulator | Reserved crates + `fig.proto` placeholder; land in Commits 09–13 |
-| MVCC/transactions/sharding | Reserved crates; land in Commits 14–18 |
-| Chaos/console | Reserved crates; land in Commits 19–20 |
+| [`crates/fig-core/src/kv.rs`](crates/fig-core/src/kv.rs) (4 tests) | PUT/GET/DELETE roundtrip, byte ordering, scan bounds, limit enforcement |
+| [`crates/fig-core/src/ops.rs`](crates/fig-core/src/ops.rs) (3 tests) | `MemoryKv` agrees with `ReferenceKv` on seeded streams up to 10k ops |
+| [`crates/fig-wal/src/record.rs`](crates/fig-wal/src/record.rs) (3 tests) | Frame roundtrip, torn prefix reads as torn (not corrupt), bit flips detected |
+| [`crates/fig-wal/src/segment.rs`](crates/fig-wal/src/segment.rs) (1 test) | Header + single-frame write/replay |
+| [`crates/fig-wal/src/wal.rs`](crates/fig-wal/src/wal.rs) (2 tests) | Dense seqnos across reopen, order preserved across rotation |
+| [`crates/fig-wal/tests/crash.rs`](crates/fig-wal/tests/crash.rs) (3 tests) | Acked prefix survives 20 seeded crash campaigns; mid-file corruption truncates the suffix; torn tails never replay |
 
-For the full milestone sequence and the definition of feature completion, see
-the 20-commit roadmap below and [`docs/`](docs/).
-
-## Roadmap: twenty milestone commits
-
-```text
-01 Foundation → 02 In-memory model → 03 WAL → 04 Crash-safe persistence →
-05 SSTables → 06 LSM → 07 Compaction → 08 Perf baseline → 09 Network DB →
-10 Election → 11 Replication → 12 Simulator → 13 Snapshots → 14 MVCC →
-15 Serializable txn → 16 Sharding → 17 Distributed txn → 18 Rebalance →
-19 Chaos/correctness → 20 Console + v1.0.0
-```
-
-Each milestone ships implementation + unit + integration + failure tests +
-metrics + docs. History uses meaningful prefixes (`storage:`, `raft:`,
-`txn:`, `chore:`, `docs:`) — never `update` / `fix` / `stuff`.
-
-## See it, run it, inspect it
-
-### Prerequisites
-
-Stable Rust (1.75+) via rustup. On macOS with the MacOSX27 SDK,
-`scripts/check.sh` pins a known-good SDK automatically.
-
-### Verify the foundation
+Run everything:
 
 ```bash
-./scripts/check.sh   # cargo fmt --check + clippy -D warnings + cargo test
+./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
 ```
 
-### Exercise the KV oracle
+Or scoped:
 
 ```bash
-cargo test -p fig-core          # unit + differential tests
-cargo test -p fig-wal           # WAL + crash/restart gate (once landed)
+cargo test -p fig-core            # oracle + differential tests
+cargo test -p fig-wal            # unit tests
+cargo test -p fig-wal --test crash   # crash/restart gate (also its own CI job)
 ```
 
-### Inspect a crate boundary
+## Durability in one paragraph
 
-```bash
-cargo doc -p fig-core --open   # errors, limits, tracing conventions
-cat proto/fig.proto            # gRPC surface reserved for Commit 09
-```
-
-These commands prove workspace behavior, not a running database. There is no
-cluster to start yet — that arrives with the network database (Commit 09).
-
-## Proof across the stack
-
-Correctness is built incrementally, never inferred from integration tests
-passing:
-
-- **Reference models + differential testing** — every engine must agree with
-  the oracle on randomized operation streams (live since Commit 02).
-- **Property tests** — PUT/GET roundtrips, compaction invariance, restart
-  durability, snapshot restore, follower convergence, txn atomicity.
-- **Deterministic simulation** — seeded virtual clock/network/disk reproduce
-  drops, delays, reorders, crashes, partitions, and disk faults (Commit 12).
-- **Fuzzing + chaos + soak** — parser/SSTable/WAL fuzzers, chaos runner,
-  hours-long soak with no unbounded growth (Commit 19).
-
-See [`docs/correctness/strategy.md`](docs/correctness/strategy.md) and
-[`docs/testing/strategy.md`](docs/testing/strategy.md).
+A write is acknowledged if and only if it sits at or before the last
+`Wal::sync()`. Recovery replays exactly that prefix — torn tails truncated,
+corrupt frames stop and truncate replay, sequence numbers stay dense. Details:
+[durability](docs/architecture/durability.md).
 
 ## Repository map
 
-| Path | Purpose |
-|---|---|
-| [`crates/fig-core/`](crates/fig-core/) | Shared errors, config/limits, KV oracle, tracing bootstrap |
-| [`crates/fig-wal/`](crates/fig-wal/) | Checksummed WAL (Commit 03) |
-| [`crates/fig-storage/`](crates/fig-storage/) | Memtable/LSM/flush/compact/cache (Commits 04, 06–08) |
-| [`crates/fig-sstable/`](crates/fig-sstable/) | Immutable SSTables (Commit 05) |
-| [`crates/fig-raft/`](crates/fig-raft/) | Election/replication/snapshots (Commits 10–11, 13) |
-| [`crates/fig-mvcc/`](crates/fig-mvcc/) | Versioning (Commit 14) |
-| [`crates/fig-txn/`](crates/fig-txn/) | Single-shard + cross-shard atomic commit (Commits 15, 17) |
-| [`crates/fig-sharding/`](crates/fig-sharding/) | Routing + split/rebalance (Commits 16, 18) |
-| [`crates/fig-rpc/`](crates/fig-rpc/) | tonic/gRPC protocol (Commit 09) |
-| [`crates/fig-client/`](crates/fig-client/) | Leader discovery, retries, request IDs |
-| [`crates/fig-server/`](crates/fig-server/) | Node binary |
-| [`crates/fig-sim/`](crates/fig-sim/) | Deterministic simulator (Commit 12) |
-| [`crates/fig-chaos/`](crates/fig-chaos/) | Chaos runner (Commit 19) |
-| [`crates/fig-bench/`](crates/fig-bench/) | Benchmarks (Commit 08+) |
-| [`proto/`](proto/) | gRPC IDL |
-| [`docs/`](docs/) | Architecture, ADRs, correctness, benchmarks, testing |
-| [`dashboard/`](dashboard/) | React/TS console (Commit 20) |
-| [`deployment/`](deployment/) | Docker/local cluster (Commit 20) |
+```text
+crates/fig-core/    errors, config/limits, KV oracle, tracing
+crates/fig-wal/     the log (record / segment / wal) + crash tests
+docs/                   architecture, ADRs, correctness, benchmarks, testing
+scripts/check.sh        local gate: fmt + clippy + tests
+.github/workflows/     ci.yml mirrors check.sh, plus the WAL crash gate
+```
 
 ## Documentation and history
 
-Start with [`docs/README.md`](docs/README.md). It separates current canonical
-guidance from dated records. Each important decision gets an ADR in
-[`docs/adr/`](docs/adr/) covering context, decision, alternatives, tradeoffs,
-and consequences — when prose and code disagree, the code plus its tests win
-until the docs are updated in the same milestone.
+Start with [`docs/README.md`](docs/README.md). Important decisions get an ADR
+in [`docs/adr/`](docs/adr/). Commits look like `wal: ...`, `core: ...`,
+`docs: ...`, `chore: ...` — one piece of work each, so the history reads like
+the build went.
 
 ## License and author
 
 Intended license: **MIT OR Apache-2.0** (matching `Cargo.toml`); license texts
-land before any public release. No code here is published under another
-license, and no third-party database engine is embedded — infrastructure
-libraries only (Tokio, tonic, serde, tracing).
+land before any public release. Infrastructure libraries only (Tokio, serde,
+tracing) — no embedded database engine.
 
 Database architecture and project by **Tyrone Marhguy**.
