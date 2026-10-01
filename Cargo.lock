@@ -177,6 +177,7 @@ name = "fig-storage"
 version = "0.1.0"
 dependencies = [
  "fig-core",
+ "fig-sstable",
  "fig-wal",
  "rand 0.8.8",
  "tempfile",
