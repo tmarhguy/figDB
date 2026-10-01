@@ -34,6 +34,12 @@ impl MemoryKv {
         self.map.len()
     }
 
+    /// Every live pair in ascending order. The only complete read;
+    /// range queries go through [`MemoryKv::scan`].
+    pub fn iter(&self) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> + '_ {
+        self.map.iter().map(|(k, v)| (k.clone(), v.clone()))
+    }
+
     /// Whether the store is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
