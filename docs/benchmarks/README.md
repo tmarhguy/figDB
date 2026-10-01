@@ -50,6 +50,26 @@ The p99/max column is the foreground-compaction tradeoff made visible:
 writes stall during merges (max 66 ms release). No background thread hides
 it yet — see ADR-003.
 
+## Run C — 60k keys, background compaction + concurrent clients (release)
+
+Same dataset/settings as Run B, plus `--compact-interval-ms 200`, after
+ADR-005 (snapshot reads, RwLock, merges off the write path).
+`fig-bench --clients` partitions keys by stride; throughput is wall-clock
+(`n/wall` — the previous `n/Σlat` formula understated concurrency).
+
+| Clients | Op | Throughput (wall) | avg | p50 | p99 | max |
+|---|---|---|---|---|---|---|
+| 1 | PUT | 26,987/s | 0.04 ms | 0.03 ms | 0.12 ms | 21.41 ms |
+| 1 | GET | 28,471/s | 0.03 ms | 0.03 ms | 0.11 ms | 2.28 ms |
+| 8 | PUT | 59,315/s | 0.13 ms | 0.08 ms | 0.52 ms | 27.18 ms |
+| 8 | GET | 96,013/s | 0.08 ms | 0.07 ms | 0.29 ms | 10.22 ms |
+
+End state (both): 5 flushes, 1 auto-compaction, final compact 0.06 s →
+1 table, 5.0 MB. Against Run B (inline compaction): single-client PUT
+8.0k → 27.0k/s, p99 1.74 → 0.12 ms — moving merges off the write path is
+the dominant win; concurrency adds the rest (reads 3.4x, writes 2.2x —
+WAL append serialization is the remaining write ceiling).
+
 ## Soak — SIGKILL per cycle (debug)
 
 `scripts/soak.sh 3 2000`: 3 cycles × 2,000 keys, server `kill -9`d after
@@ -60,7 +80,7 @@ as tables accumulate, because auto-compaction bounds the stack.
 
 ## What is NOT claimed
 
-- No multi-client concurrency numbers (requests serialize; §ADR-004).
+- Concurrency numbers are loopback-only, 1–8 clients; no multi-host latency.
 - No fsync-per-write numbers (all runs batch sync every 500).
 - No power-loss testing — kill -9 exercises page-cache-survives crashes;
   unsynced-tail loss is proven by truncation simulation (`fig-wal`
