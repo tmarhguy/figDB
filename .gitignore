@@ -11,3 +11,4 @@ internal.md
 /dashboard/dist/
 .env
 /log/.obsidian
+/build/
