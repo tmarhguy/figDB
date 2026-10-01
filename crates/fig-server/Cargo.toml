@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "fig-cli"
 path = "src/cli.rs"
 
+[[bin]]
+name = "fig-bench"
+path = "src/bench.rs"
+
 [lib]
 name = "fig_server"
 path = "src/lib.rs"
