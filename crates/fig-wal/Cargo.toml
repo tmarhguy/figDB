@@ -13,3 +13,8 @@ bytes.workspace = true
 crc32fast.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
