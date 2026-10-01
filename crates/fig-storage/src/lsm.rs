@@ -6,9 +6,11 @@
 //! new table and restarts the WAL empty — the table, already synced, is the
 //! durable copy from that point on.
 //!
-//! Flushing is foreground on a size threshold for now: it is correct and
-//! crash-tested. A background flush thread arrives with compaction, when
-//! there is real write concurrency to hide.
+//! Flushing is foreground on a size threshold: it is correct and
+//! crash-tested. Compaction is either inline in `flush()` (library default)
+//! or on a background timer via `background_compact()` (server mode, which
+//! disables the inline path so merges never stall writers). Reads use
+//! atomically-swapped snapshots, so neither path is visible to them.
 
 use crate::bloom::Bloom;
 use crate::manifest::{self, Manifest};
@@ -18,6 +20,7 @@ use fig_sstable::{SstableReader, SstableWriter, DEFAULT_BLOCK_TARGET};
 use fig_wal::FsyncPolicy;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Counters for observability. Plain struct today; Prometheus exposition later.
 #[derive(Debug, Clone, Default)]
@@ -69,17 +72,27 @@ fn open_table(id: u64, path: &Path) -> Result<Table> {
 }
 
 /// The database: memtable engine in front, SSTables behind.
+///
+/// The table stack is an atomically-swapped snapshot (`Arc`): readers clone
+/// the pointer and iterate without holding any lock, so a concurrent
+/// flush/compact can replace the stack underneath them — holders of the old
+/// snapshot keep serving it (their bytes are in memory) while new readers
+/// see the new one. The manifest on disk is the same idea made durable.
 pub struct Database {
     wal_dir: PathBuf,
     table_dir: PathBuf,
     engine: Option<Engine>,
-    /// Oldest → newest.
-    tables: Vec<Table>,
+    /// Oldest → newest. Swapped wholesale on flush/compact, never mutated.
+    tables: Arc<Vec<Arc<Table>>>,
     /// Deletes since the last flush (newer than every table).
     tombstones: BTreeSet<Vec<u8>>,
     /// Estimated memtable bytes since the last flush.
     mem_bytes: usize,
     flush_threshold: usize,
+    /// Whether `flush()` folds the stack inline when the threshold is hit.
+    /// The server disables this and lets a background task own compaction so
+    /// merges never stall the write path; the library default stays `true`.
+    auto_compact: bool,
     metrics: LsmMetrics,
     next_table_id: u64,
     cfg: Config,
@@ -134,16 +147,20 @@ impl Database {
         };
         let mut tables = Vec::new();
         for id in &table_ids {
-            tables.push(open_table(*id, &manifest::table_path(&table_dir, *id))?);
+            tables.push(Arc::new(open_table(
+                *id,
+                &manifest::table_path(&table_dir, *id),
+            )?));
         }
         let mut db = Self {
             wal_dir,
             table_dir,
             engine: Some(engine),
-            tables,
+            tables: Arc::new(tables),
             tombstones,
             mem_bytes,
             flush_threshold: flush_threshold.max(1),
+            auto_compact: true,
             metrics: LsmMetrics::default(),
             next_table_id,
             cfg,
@@ -206,12 +223,15 @@ impl Database {
         Ok(removed)
     }
 
-    /// GET(key): memtable first, then newest table to oldest.
+    /// GET(key): memtable first, then newest table to oldest. Operates on a
+    /// snapshot: safe to call concurrently with flush/compact on another
+    /// thread (needs only `&self`).
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         if let Some(v) = self.eng().get(key) {
             return Ok(Some(v));
         }
-        for table in self.tables.iter().rev() {
+        let snapshot = Arc::clone(&self.tables);
+        for table in snapshot.iter().rev() {
             if table.tombstones.contains(key) {
                 return Ok(None);
             }
@@ -225,7 +245,7 @@ impl Database {
         Ok(None)
     }
 
-    /// SCAN(start, end): merged ascending live pairs.
+    /// SCAN(start, end): merged ascending live pairs. Snapshot read like `get`.
     pub fn scan(&self, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         if start >= end {
             return Err(Error::InvalidArgument(
@@ -233,7 +253,8 @@ impl Database {
             ));
         }
         let mut merged: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
-        for table in &self.tables {
+        let snapshot = Arc::clone(&self.tables);
+        for table in snapshot.iter() {
             for rec in table.reader.iter()? {
                 merged.insert(rec.key, rec.value);
             }
@@ -318,7 +339,11 @@ impl Database {
         self.engine = Some(Engine::open(&self.wal_dir, self.cfg.clone(), self.fsync)?);
 
         self.next_table_id += 1;
-        self.tables.push(table);
+        // Swap the snapshot: concurrent readers keep the old Arc (their bytes
+        // are in memory), new readers see the appended stack.
+        let mut next: Vec<Arc<Table>> = self.tables.iter().cloned().collect();
+        next.push(Arc::new(table));
+        self.tables = Arc::new(next);
         self.tombstones.clear();
         // Publish the new table set before dropping the WAL: until this
         // manifest lands, the WAL is the only durable copy; after it lands,
@@ -340,11 +365,31 @@ impl Database {
             "flushed memtable to sstable"
         );
         // A flush grows the stack by one; fold the oldest batch down when the
-        // fan-out bound is reached. Foreground (not background) on purpose:
-        // no write concurrency exists yet to hide behind, and a stalled write
-        // is observable while a lost write is not.
-        self.maybe_compact()?;
+        // fan-out bound is reached — unless a background task owns compaction
+        // (server mode), in which case the write path only ever appends.
+        if self.auto_compact {
+            self.maybe_compact()?;
+        }
         Ok(true)
+    }
+
+    /// Whether `flush()` compacts inline when the stack hits the threshold.
+    /// The server disables this (`false`) and runs [`Database::background_compact`]
+    /// on a timer instead, so merges never stall writers.
+    pub fn set_auto_compact(&mut self, on: bool) {
+        self.auto_compact = on;
+    }
+
+    /// One background step: merge the oldest batch if the stack reached the
+    /// threshold. Returns true if a merge ran. Safe to call on a timer while
+    /// readers use snapshots — same crash protocol as `flush()`.
+    pub fn background_compact(&mut self) -> Result<bool> {
+        if self.tables.len() < COMPACT_THRESHOLD_TABLES {
+            return Ok(false);
+        }
+        // Partial merge: older tables may still sit below the inputs, so
+        // every tombstone is kept — it may be shadowing them.
+        self.merge_tables(COMPACT_BATCH, false)
     }
 
     /// Compact: flush the memtable, then merge ALL tables into one sorted run,
@@ -428,17 +473,16 @@ impl Database {
             }
         };
 
-        // Swap memory first (output holds the oldest data, remaining tables
-        // are newer), then the manifest, then reap the input files. A crash
-        // after the manifest leaves unlisted inputs that open reaps; the data
-        // is already in the output.
-        let mut rest: Vec<Table> = self.tables.drain(n..).collect();
-        let mut tables = Vec::with_capacity(rest.len() + 1);
+        // Swap the snapshot first (output holds the oldest data, remaining
+        // tables are newer), then the manifest, then reap the input files. A
+        // crash after the manifest leaves unlisted inputs that open reaps;
+        // the data is already in the output. Readers on the old Arc are
+        // unaffected either way.
+        let mut next: Vec<Arc<Table>> = self.tables.iter().skip(n).cloned().collect();
         if let Some(t) = output {
-            tables.push(t);
+            next.insert(0, Arc::new(t));
         }
-        tables.append(&mut rest);
-        self.tables = tables;
+        self.tables = Arc::new(next);
         let live_ids: Vec<u64> = self.tables.iter().map(|t| t.id).collect();
         manifest::write_manifest(
             &self.table_dir,

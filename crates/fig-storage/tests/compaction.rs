@@ -158,6 +158,38 @@ fn auto_compact_bounds_table_count() {
 }
 
 #[test]
+fn disabled_auto_compact_grows_until_background_step_runs() {
+    // Server mode contract: with inline compaction off, the write path only
+    // appends; explicit background steps fold the stack. Same oracle rules.
+    use std::collections::HashMap;
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = open(dir.path());
+    db.set_auto_compact(false);
+    let mut oracle: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+    for i in 0..400usize {
+        let k = vec![(i % 128) as u8, (i / 128) as u8];
+        let v = vec![(i % 251) as u8; 4];
+        db.put(k.clone(), v.clone()).unwrap();
+        oracle.insert(k, v);
+    }
+    assert!(
+        db.table_count() > 8,
+        "inline compaction off: stack must grow unbounded, got {}",
+        db.table_count()
+    );
+    assert_eq!(db.metrics().compactions, 0);
+    while db.background_compact().unwrap() {}
+    assert!(
+        db.table_count() <= 8,
+        "background steps must fold the stack, got {}",
+        db.table_count()
+    );
+    let mut want: Vec<_> = oracle.into_iter().collect();
+    want.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(db_scan(&db), want);
+}
+
+#[test]
 fn crash_after_output_publish_but_before_manifest_keeps_inputs() {
     // Crash window A: merged output renamed to final, manifest never swapped.
     // Open must reap the orphan and serve the inputs untouched.
