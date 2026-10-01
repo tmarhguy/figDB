@@ -162,6 +162,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fig-sstable"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "fig-core",
+ "rand 0.8.8",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "fig-storage"
 version = "0.1.0"
 dependencies = [
