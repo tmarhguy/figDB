@@ -1,28 +1,25 @@
-# Durability (Commit 01 placeholder)
+# Durability
 
-> Full durability argument lands with WAL (Commit 03), crash-safe memtable (Commit 04),
-> and replication (Commit 11). This file reserves the contract so later commits only
-> fill in measured behavior — never weaken it (§52).
-
-## Vocabulary (`internal.md` §5)
+## Vocabulary
 
 `received ≠ replicated ≠ committed ≠ persisted ≠ applied ≠ acknowledged.`
 
-## Acknowledgement rule (to be finalized in Commit 11)
+There is no replication yet, so only three of these are meaningful today:
+received, persisted, acknowledged.
 
-- **Single-node (Commits 03–04):** a write is acknowledged only after WAL append + `fsync`
-  per the configured durability mode and memtable apply. Torn/corrupt tails are detected
-  by CRC and truncated; acknowledged prefix survives restart (property-tested).
-- **Replicated (Commit 11+):** a write is acknowledged only after Raft quorum commit +
-  state-machine apply + persistence per durability mode. Leader commit without quorum
-  is never acknowledged.
+## Acknowledgement rule
 
-## Crash points tested (WAL, §6)
+A write is acknowledged if and only if it sits at or before the last
+`Wal::sync()`. The WAL replays that prefix after a crash: torn tails are
+truncated, corrupt frames stop replay and are truncated, sequence numbers stay
+dense so no write is ever replayed twice or skipped.
 
-`before append / during append / after append / before fsync / after fsync /
-before memtable apply / after memtable apply`, plus `FAIL_WRITE / FAIL_FSYNC /
-CORRUPT_BLOCK / truncated file / disk full` via fault injection (Commit 19).
+Crash behavior is proven by `crates/fig-wal/tests/crash.rs`: randomized
+streams with crashes at random points always recover a prefix that contains
+every acknowledged write and nothing torn.
 
-## What is explicitly NOT claimed yet
+## What is explicitly NOT claimed
 
-No durable acknowledged writes exist in Commit 01 (in-memory skeletons only).
+- No memtable yet: replay currently yields entries, nothing applies them.
+- No replication: a disk loss is not survived, only a process crash.
+- No checksums above the WAL frame level.

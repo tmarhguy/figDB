@@ -1,15 +1,14 @@
-# Correctness Strategy (Commit 01)
+# Correctness Strategy
 
-Per `internal.md` §§23–28. Implemented incrementally; this file tracks what exists.
+What runs, in order of arrival:
 
-| Technique | Status (Commit 01) | Lands in |
-|---|---|---|
-| ReferenceKV oracle + differential tests | planned | Commit 02 |
-| Property tests (PUT/GET, DELETE, compaction-invariance, restart-durability, snapshot-restore, follower-convergence, txn atomicity) | planned | Commits 02–07, 14–15 |
-| History collection + linearizability checker | planned | Commits 15, 19 |
-| Loom concurrency tests | planned | Commits 06, 15 |
-| WAL/SSTable/RPC/snapshot fuzzing (no panic/corruption, bounded resources) | planned | Commit 19 |
-| Deterministic simulation (`fig-sim --seed N`) | planned | Commit 12 |
-| Chaos runner + soak | planned | Commit 19 |
+| Technique | Status |
+|---|---|
+| ReferenceKV oracle + differential tests on seeded streams | live (`fig-core`) |
+| WAL crash/restart gate: acked prefix survives torn tails + corruption | live (`fig-wal/tests/crash.rs`) |
+| Property tests per engine (PUT/GET, restart durability, ... ) | next, with the memtable |
+| History collection + linearizability checker | with transactions |
+| Fuzzing (WAL decoder first — untrusted bytes must not panic) | with the memtable |
+| Deterministic simulation, chaos, soak | with networking |
 
-No correctness numbers are published until actually measured (§32).
+No numbers are published until actually measured.

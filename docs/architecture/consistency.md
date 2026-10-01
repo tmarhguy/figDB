@@ -1,20 +1,14 @@
-# Consistency & Isolation (Commit 01 placeholder)
+# Consistency & Isolation
 
-> Targets from `internal.md` §§13–15. Implemented in Commits 14–15 (MVCC + serializable
-> single-shard txn) and Commit 17 (atomic cross-shard commit). Until then, only the
-> ordered single-key semantics of the Commit 02 reference model hold.
+## What holds today
 
-## Goals
+Ordered single-key semantics from `MemoryKv`: `PUT` overwrites, `DELETE`
+removes, `GET` returns the latest value, `SCAN` returns an ascending range.
+The naive `ReferenceKv` agrees on every randomized operation stream.
 
-- **Final target: serializable.** Snapshot isolation may exist as an intermediate
-  milestone; docs never claim stronger semantics than implemented (§14).
-- **Anomaly tests required:** dirty reads, non-repeatable reads, lost updates,
-  write skew, phantoms where relevant.
-- **Cross-shard atomicity:** no transaction may permanently commit on only a subset
-  of participating shards; coordinator/participant crash matrix in §16 is fault-tested.
+## What is explicitly NOT claimed
 
-## Method
-
-Reference MVCC model + differential tests → optimistic validation or locking
-(decided in ADR-006) → history collection + serialization checker → deterministic
-simulation of coordinator failures → linearizability/history checks (Commit 19).
+No versions, no snapshots, no transactions. The target is serializable
+isolation with MVCC, validated by anomaly tests (dirty reads, lost updates,
+write skew, phantoms) — none of that exists yet, and this doc will say when
+it does.
