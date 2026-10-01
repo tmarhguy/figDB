@@ -1,23 +1,13 @@
-//! `fig-wal` — FigDB milestone skeleton (see docs/architecture/overview.md).
+//! `fig-wal`: checksummed write-ahead log with segment recovery.
 //!
-//! Commit 01 establishes the crate boundary; real implementation lands in its
-//! designated milestone commit (Commits 02–20). This placeholder keeps the
-//! workspace compiling, tested, and documented from day one.
+//! Framed records + CRC-32, dense sequence numbers, append with an explicit fsync
+//! policy, replay, torn-tail truncation, corrupt-record handling, and segment
+//! rotation. `sync()` is the acknowledgement point: everything before the last
+//! sync survives a crash; the unsynced tail may be lost but never replays torn.
 
-/// Crate name for logging/metrics labels.
-pub const CRATE_NAME: &str = "fig-wal";
+pub mod record;
+pub mod segment;
+pub mod wal;
 
-/// Placeholder health check used by workspace smoke tests.
-pub fn health() -> &'static str {
-    CRATE_NAME
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn skeleton_health() {
-        assert_eq!(health(), CRATE_NAME);
-    }
-}
+pub use record::{WalEntry, WalOp};
+pub use wal::{FsyncPolicy, RecoveryReport, Wal, WalOptions};
