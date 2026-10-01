@@ -11,5 +11,6 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+fig-core.workspace = true
 tempfile.workspace = true
 rand.workspace = true
