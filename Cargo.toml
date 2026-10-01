@@ -1,0 +1,63 @@
+[workspace]
+members = [
+    "crates/fig-core",
+    "crates/fig-storage",
+    "crates/fig-wal",
+    "crates/fig-sstable",
+    "crates/fig-raft",
+    "crates/fig-mvcc",
+    "crates/fig-txn",
+    "crates/fig-sharding",
+    "crates/fig-rpc",
+    "crates/fig-client",
+    "crates/fig-server",
+    "crates/fig-sim",
+    "crates/fig-chaos",
+    "crates/fig-bench",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tmarhguy/fig"
+rust-version = "1.75"
+
+[workspace.dependencies]
+fig-core = { path = "crates/fig-core" }
+fig-storage = { path = "crates/fig-storage" }
+fig-wal = { path = "crates/fig-wal" }
+fig-sstable = { path = "crates/fig-sstable" }
+fig-raft = { path = "crates/fig-raft" }
+fig-mvcc = { path = "crates/fig-mvcc" }
+fig-txn = { path = "crates/fig-txn" }
+fig-sharding = { path = "crates/fig-sharding" }
+fig-rpc = { path = "crates/fig-rpc" }
+fig-client = { path = "crates/fig-client" }
+fig-server = { path = "crates/fig-server" }
+fig-sim = { path = "crates/fig-sim" }
+fig-chaos = { path = "crates/fig-chaos" }
+fig-bench = { path = "crates/fig-bench" }
+
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+bytes = "1"
+crc32fast = "1.4"
+rand = "0.8"
+proptest = "1"
+tonic = "0.12"
+prost = "0.13"
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+prometheus = "0.13"
+opentelemetry = "0.24"
+
+[profile.release]
+lto = true
+codegen-units = 1

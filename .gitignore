@@ -1,0 +1,12 @@
+/target/
+**/target/
+Cargo.lock.bak
+*.orig
+*.rej
+.DS_Store
+data/
+*.log
+internal.md
+/dashboard/node_modules/
+/dashboard/dist/
+.env
