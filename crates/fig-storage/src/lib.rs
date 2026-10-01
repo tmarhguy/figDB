@@ -7,9 +7,11 @@
 
 pub mod bloom;
 pub mod lsm;
+pub mod manifest;
 
 pub use bloom::Bloom;
 pub use lsm::{Database, LsmMetrics};
+pub use manifest::Manifest;
 
 use fig_core::{Config, Error, MemoryKv, Result};
 use fig_wal::{FsyncPolicy, Wal, WalOp, WalOptions};

@@ -8,6 +8,8 @@ license.workspace = true
 fig-core.workspace = true
 fig-sstable.workspace = true
 fig-wal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 

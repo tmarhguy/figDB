@@ -11,6 +11,7 @@
 //! there is real write concurrency to hide.
 
 use crate::bloom::Bloom;
+use crate::manifest::{self, Manifest};
 use crate::Engine;
 use fig_core::{Config, Error, Result};
 use fig_sstable::{SstableReader, SstableWriter, DEFAULT_BLOCK_TARGET};
@@ -33,37 +34,13 @@ pub struct LsmMetrics {
 
 /// One flushed table with its in-memory helpers.
 struct Table {
+    id: u64,
     reader: SstableReader,
     bloom: Bloom,
     tombstones: HashSet<Vec<u8>>,
 }
 
-fn table_path(table_dir: &Path, id: u64) -> PathBuf {
-    table_dir.join(format!("sst-{id:06}.sst"))
-}
-
-fn list_tables(table_dir: &Path) -> Result<Vec<(u64, PathBuf)>> {
-    let mut out = Vec::new();
-    if !table_dir.exists() {
-        return Ok(out);
-    }
-    let entries = std::fs::read_dir(table_dir).map_err(Error::Io)?;
-    for ent in entries {
-        let ent = ent.map_err(Error::Io)?;
-        let name = ent.file_name().to_string_lossy().to_string();
-        if let Some(id) = name
-            .strip_prefix("sst-")
-            .and_then(|s| s.strip_suffix(".sst"))
-            .and_then(|s| s.parse::<u64>().ok())
-        {
-            out.push((id, ent.path()));
-        }
-    }
-    out.sort_by_key(|(id, _)| *id);
-    Ok(out)
-}
-
-fn open_table(path: &Path) -> Result<Table> {
+fn open_table(id: u64, path: &Path) -> Result<Table> {
     let reader = SstableReader::open(path)?;
     let records = reader.iter()?;
     let mut bloom = Bloom::new(records.len(), 0.01);
@@ -75,6 +52,7 @@ fn open_table(path: &Path) -> Result<Table> {
         }
     }
     Ok(Table {
+        id,
         reader,
         bloom,
         tombstones,
@@ -127,11 +105,27 @@ impl Database {
             .map(|(k, v)| k.len() + v.len())
             .sum::<usize>()
             + tombstones.iter().map(|k| k.len() + 1).sum::<usize>();
+        // The live table set is defined by MANIFEST, not the directory
+        // listing (see `manifest.rs`). Staging litter and unpublished orphans
+        // from a crashed flush/compact are cleaned here, before any reads.
+        manifest::remove_staging_litter(&table_dir)?;
+        let (table_ids, next_table_id) = match manifest::read_manifest(&table_dir)? {
+            Some(m) => {
+                manifest::remove_unlisted_tables(&table_dir, &m.tables)?;
+                (m.tables, m.next_table_id)
+            }
+            None => {
+                // Pre-manifest directory: adopt existing tables once, then
+                // publish the manifest so later opens take the fast path.
+                let ids = manifest::scan_legacy_tables(&table_dir)?;
+                let next = ids.iter().max().map(|max| max + 1).unwrap_or(0);
+                manifest::write_manifest(&table_dir, &Manifest::new(next, ids.clone()))?;
+                (ids, next)
+            }
+        };
         let mut tables = Vec::new();
-        let mut next_table_id = 0u64;
-        for (id, path) in list_tables(&table_dir)? {
-            tables.push(open_table(&path)?);
-            next_table_id = next_table_id.max(id + 1);
+        for id in &table_ids {
+            tables.push(open_table(*id, &manifest::table_path(&table_dir, *id))?);
         }
         let mut db = Self {
             wal_dir,
@@ -268,8 +262,22 @@ impl Database {
         }
 
         let id = self.next_table_id;
-        let path = table_path(&self.table_dir, id);
-        let mut w = SstableWriter::create(&path, DEFAULT_BLOCK_TARGET)?;
+        // Crash-safe publish: write to a staging path readers never open,
+        // then rename (atomic) + dir fsync. A crash before the rename leaves
+        // only `.tmp` litter (cleaned at open); a crash before the manifest
+        // update below leaves an unlisted orphan (also cleaned at open). The
+        // WAL still holds the data in both windows, so nothing is lost.
+        let tmp_path = manifest::table_tmp_path(&self.table_dir, id);
+        let final_path = manifest::table_path(&self.table_dir, id);
+        if final_path.exists() {
+            return Err(Error::Internal(format!(
+                "flush: table {id} already published"
+            )));
+        }
+        if tmp_path.exists() {
+            std::fs::remove_file(&tmp_path).map_err(Error::Io)?;
+        }
+        let mut w = SstableWriter::create(&tmp_path, DEFAULT_BLOCK_TARGET)?;
         for (k, v) in &merged {
             match v {
                 Some(value) => w.put(k, value)?,
@@ -277,7 +285,15 @@ impl Database {
             }
         }
         let meta = w.finish()?;
-        let table = open_table(&path)?;
+        std::fs::rename(&tmp_path, &final_path).map_err(Error::Io)?;
+        manifest::fsync_dir(&self.table_dir)?;
+        let table = match open_table(id, &final_path) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = std::fs::remove_file(&final_path);
+                return Err(e);
+            }
+        };
 
         // The table is synced and readable: the WAL's copy is redundant.
         // Drop the engine (closing its files), delete its segments, reopen empty.
@@ -295,6 +311,14 @@ impl Database {
         self.next_table_id += 1;
         self.tables.push(table);
         self.tombstones.clear();
+        // Publish the new table set before dropping the WAL: until this
+        // manifest lands, the WAL is the only durable copy; after it lands,
+        // the table is. Either side of a crash has the data.
+        let live_ids: Vec<u64> = self.tables.iter().map(|t| t.id).collect();
+        manifest::write_manifest(
+            &self.table_dir,
+            &Manifest::new(self.next_table_id, live_ids),
+        )?;
         self.mem_bytes = 0;
         self.metrics.flushes += 1;
         self.metrics.flushed_records += meta.records;
