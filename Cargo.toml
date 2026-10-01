@@ -16,6 +16,8 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 fig-core = { path = "crates/fig-core" }
+fig-sstable = { path = "crates/fig-sstable" }
+fig-storage = { path = "crates/fig-storage" }
 fig-wal = { path = "crates/fig-wal" }
 
 tokio = { version = "1", features = ["full"] }

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 fig-core.workspace = true
+fig-sstable.workspace = true
 fig-wal.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
