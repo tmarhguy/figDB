@@ -9,6 +9,8 @@
 //! Wire types derive serde now so R3 networking reuses them byte-for-byte.
 
 pub mod core;
+pub mod persist;
 pub mod sim;
 
-pub use core::{Effect, Entry, Event, Message, Node, NodeId, Role};
+pub use core::{Dirty, Effect, Entry, Event, Message, Node, NodeId, Role};
+pub use persist::Store;

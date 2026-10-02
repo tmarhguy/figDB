@@ -13,7 +13,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/tmarhguy/fig"
+repository = "https://github.com/tmarhguy/figDB"
 rust-version = "1.75"
 
 [workspace.dependencies]

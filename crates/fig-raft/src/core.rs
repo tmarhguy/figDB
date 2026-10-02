@@ -88,6 +88,26 @@ pub enum Effect {
     NotLeader { leader: Option<NodeId> },
 }
 
+/// What changed on disk since the last [`Node::take_dirty`]. The caller must
+/// persist this (see `persist::Store`) *before* acting on the effects of the
+/// same `poll` — a vote must be durable before its reply is sent, and an
+/// entry before it is acknowledged. Volatile state (role, commit index,
+/// leader tracking) is never persisted: terms and logs re-elect and
+/// re-commit it after a restart.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Dirty {
+    /// `current_term` or `voted_for` changed.
+    pub hard_state: bool,
+    /// The log suffix changed (append and/or truncate).
+    pub log: bool,
+}
+
+impl Dirty {
+    pub fn any(&self) -> bool {
+        self.hard_state || self.log
+    }
+}
+
 /// A single Raft participant. Single-threaded by construction: `poll` takes
 /// `&mut self` and returns owned effects; no interior mutability, no I/O.
 pub struct Node {
@@ -108,6 +128,7 @@ pub struct Node {
     next_index: HashMap<NodeId, u64>,
     /// Leader state: highest replicated index per peer.
     match_index: HashMap<NodeId, u64>,
+    dirty: Dirty,
 }
 
 impl Node {
@@ -130,6 +151,37 @@ impl Node {
             votes: HashSet::new(),
             next_index: HashMap::new(),
             match_index: HashMap::new(),
+            dirty: Dirty::default(),
+        }
+    }
+
+    /// Rebuild durable state after a restart. Volatile state (role, commit,
+    /// leader, replication progress) always restarts clean: terms and logs
+    /// re-elect and re-commit it. `log` must include the index-0 dummy.
+    pub fn restore(
+        id: NodeId,
+        peers: Vec<NodeId>,
+        current_term: u64,
+        voted_for: Option<NodeId>,
+        log: Vec<Entry>,
+    ) -> Self {
+        debug_assert!(!peers.contains(&id), "self must not be listed as peer");
+        debug_assert!(!log.is_empty(), "log must include the index-0 dummy");
+        debug_assert_eq!(log[0].index, 0, "log must start at index 0");
+        Self {
+            id,
+            peers,
+            role: Role::Follower,
+            current_term,
+            voted_for,
+            log,
+            commit_index: 0,
+            last_applied: 0,
+            leader: None,
+            votes: HashSet::new(),
+            next_index: HashMap::new(),
+            match_index: HashMap::new(),
+            dirty: Dirty::default(),
         }
     }
 
@@ -159,6 +211,30 @@ impl Node {
         self.log[1..=self.commit_index as usize].to_vec()
     }
 
+    /// Durable hard state for `persist::Store`.
+    pub fn hard_state(&self) -> (u64, Option<NodeId>) {
+        (self.current_term, self.voted_for)
+    }
+
+    /// Full durable log including the index-0 dummy.
+    pub fn durable_log(&self) -> &[Entry] {
+        &self.log
+    }
+
+    /// What changed since the last call. Persist it *before* acting on the
+    /// effects of the same `poll`, then the flags clear.
+    pub fn take_dirty(&mut self) -> Dirty {
+        std::mem::take(&mut self.dirty)
+    }
+
+    fn mark_hard_state(&mut self) {
+        self.dirty.hard_state = true;
+    }
+
+    fn mark_log(&mut self) {
+        self.dirty.log = true;
+    }
+
     fn cluster_size(&self) -> usize {
         self.peers.len() + 1
     }
@@ -186,6 +262,7 @@ impl Node {
         self.current_term += 1;
         self.role = Role::Candidate;
         self.voted_for = Some(self.id);
+        self.mark_hard_state();
         self.leader = None;
         self.votes.clear();
         self.votes.insert(self.id);
@@ -231,6 +308,7 @@ impl Node {
             term: self.current_term,
             command,
         });
+        self.mark_log();
         debug_assert_eq!(self.log[index as usize].index, index);
         // Single-node clusters commit on self-store (majority of one);
         // larger clusters commit as AppendEntriesResponses arrive.
@@ -248,6 +326,10 @@ impl Node {
 
     fn become_follower(&mut self, term: u64) {
         debug_assert!(term >= self.current_term);
+        // Hard state always re-persisted on term change; stepping down in the
+        // same term only clears `voted_for` when it was set, but marking
+        // unconditionally keeps the crash contract simple (idempotent write).
+        self.mark_hard_state();
         self.role = Role::Follower;
         self.current_term = term;
         self.voted_for = None;
@@ -358,6 +440,7 @@ impl Node {
         let grantable = self.voted_for.is_none_or(|v| v == candidate);
         if fresh && grantable {
             self.voted_for = Some(candidate);
+            self.mark_hard_state();
             vec![
                 Effect::Send {
                     to: from,
@@ -430,10 +513,17 @@ impl Node {
             return vec![self.append_reply(from, false), Effect::ResetElectionTimer];
         }
         // Truncate any conflicting suffix, then append the new entries.
+        // Heartbeats (empty entries, no truncation) leave the log clean so
+        // steady-state replication costs no disk write on followers.
+        let had_suffix = self.log.len() > prev_index as usize + 1;
+        let has_new = !entries.is_empty();
         self.log.truncate(prev_index as usize + 1);
         for e in entries {
             debug_assert_eq!(e.index, self.log.len() as u64);
             self.log.push(e);
+        }
+        if had_suffix || has_new {
+            self.mark_log();
         }
         if leader_commit > self.commit_index {
             self.commit_index = leader_commit.min(self.last_index());

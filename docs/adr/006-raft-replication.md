@@ -3,6 +3,9 @@
 - **Status:** accepted
 - **Date:** 2026-10-01
 - **Deciders:** FigDB maintainers
+- **Progress:** R1 landed (deterministic core + sim, `36bb090`); R2 landed
+  (`Dirty` tracking + crash-safe `Store`, 10 `fig-raft` tests green).
+  R3 (server integration) is next.
 
 ## Context
 
@@ -54,5 +57,7 @@ acceptable for now); static membership means no elastic resize yet.
 ## Consequences
 
 `crates/fig-raft/` + sim tests; `docs/correctness` gains the Raft safety
-table when R1 lands. Revisit: log snapshots + membership change as the next
+table when R1 lands (done: see `correctness/strategy.md`). R2 adds the
+`persist::Store` gate (vote/log survival, heartbeat-writes-nothing,
+suffix-overwrite). Revisit: log snapshots + membership change as the next
 replication milestone; transactions only after reads/writes replicate.

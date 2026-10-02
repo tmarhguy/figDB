@@ -2,134 +2,58 @@
 <h1 align="center">FigDB</h1>
 <p align="center"><strong>A distributed transactional database built from first principles in Rust.</strong></p>
 <p align="center">
-  <a href="https://github.com/tmarhguy/fig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tmarhguy/fig/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tmarhguy/figDB/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tmarhguy/figDB/actions/workflows/ci.yml/badge.svg"></a>
   <a href="docs/README.md"><img alt="Status: active development" src="https://img.shields.io/badge/status-active%20development-2ea043"></a>
-  <a href="#tests-66-passing"><img alt="Tests: 66 passing" src="https://img.shields.io/badge/tests-66%20passing-2ea043"></a>
-  <a href="#license-and-author"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-990000"></a>
+  <a href="docs/testing/inventory.md"><img alt="Tests: 76 passing" src="https://img.shields.io/badge/tests-76%20passing-2ea043"></a>
+  <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-990000"></a>
 </p>
 
-FigDB is a database built the hard way: its storage, consensus, and
-transaction mechanisms are implemented directly, not delegated to an embedded
-engine. No RocksDB, no etcd, no Raft library.
+FigDB implements its storage, consensus, and transaction mechanisms directly —
+no RocksDB, no etcd, no Raft library.
 
-Honest status: four crates exist. An ordered in-memory KV model with a
-differential-test oracle, a checksummed write-ahead log with crash tests, a
-WAL-backed memtable engine with kill/restart tests, immutable SSTables with
-indexed lookup, and an LSM database that flushes the memtable into Bloom-
-checked tables with merged reads. Everything above that — compaction, Raft,
-transactions — is next, not here. This README describes only what is checked in.
+Honest status: single-node LSM + TCP server + Raft core through durability are
+landed and crash-tested. Server replication wiring and transactions are next,
+not here. Full inventory: [docs/architecture/status.md](docs/architecture/status.md).
 
-**Explore:** [architecture](docs/architecture/overview.md) ·
-[durability](docs/architecture/durability.md) ·
-[consistency](docs/architecture/consistency.md) ·
-[correctness](docs/correctness/strategy.md) ·
-[testing](docs/testing/strategy.md) ·
-[ADRs](docs/adr/README.md)
-
-## What's real
-
-| Piece | Where | State |
-|---|---|---|
-| Ordered KV model (`MemoryKv`: GET/PUT/DELETE/SCAN over bytes) | [`crates/fig-core/src/kv.rs`](crates/fig-core/src/kv.rs) | done, tested |
-| Naive oracle (`ReferenceKv`) + seeded operation streams | [`crates/fig-core/src/reference.rs`](crates/fig-core/src/reference.rs), [`ops.rs`](crates/fig-core/src/ops.rs) | done, tested |
-| Checksummed WAL: framed records, seqnos, segments, replay, torn-tail vs corruption recovery | [`crates/fig-wal/src/`](crates/fig-wal/src/) | done, tested |
-| WAL-backed memtable (`Engine`): `PUT → WAL → memtable`, `restart → replay` | [`crates/fig-storage/src/lib.rs`](crates/fig-storage/src/lib.rs) | done, tested |
-| Immutable SSTables: checksummed blocks, index, footer, tombstones | [`crates/fig-sstable/src/`](crates/fig-sstable/src/) | done, tested |
-| LSM database: threshold flushing, Bloom filters, merged reads, metrics | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) | done, tested |
-| Crash-safe publishing: `MANIFEST` (tmp→rename→fsync) defines the live table set; orphans/litter reaped at open | [`crates/fig-storage/src/manifest.rs`](crates/fig-storage/src/manifest.rs) | done, tested |
-| Size-tiered compaction: oldest-8 auto-merge, manual full merge, tombstone GC | [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (`compact`) | done, tested |
-| TCP server + CLI: JSON-lines `put/get/delete/scan/sync/flush/compact/stats`, base64 values; snapshot reads, RwLock, background compaction timer | [`crates/fig-server/src/`](crates/fig-server/src/) | done, tested |
-| Load generator + soak: `fig-bench` (ops/s, p50/p99 over TCP), `scripts/soak.sh` (kill-9 every cycle) | [`crates/fig-server/src/bench.rs`](crates/fig-server/src/bench.rs), [`scripts/soak.sh`](scripts/soak.sh) | done, measured |
-| Shared errors, config limits, tracing bootstrap | [`crates/fig-core/src/`](crates/fig-core/src/error.rs) | done, tested |
-
-Next up: the replication design (Raft) — single-node throughput is measured and the write ceiling is the WAL, so the next bottleneck worth attacking is redundancy, not local speed.
-
-## Tests (66 passing)
-
-Tests live next to the code — unit tests in `src/` files, crash tests in
-`tests/`. CI runs all of this on every push
-([workflow](.github/workflows/ci.yml)).
-
-| File | What it proves |
-|---|---|
-| [`crates/fig-core/src/kv.rs`](crates/fig-core/src/kv.rs) (4 tests) | PUT/GET/DELETE roundtrip, byte ordering, scan bounds, limit enforcement |
-| [`crates/fig-core/src/ops.rs`](crates/fig-core/src/ops.rs) (3 tests) | `MemoryKv` agrees with `ReferenceKv` on seeded streams up to 10k ops |
-| [`crates/fig-wal/src/record.rs`](crates/fig-wal/src/record.rs) (3 tests) | Frame roundtrip, torn prefix reads as torn (not corrupt), bit flips detected |
-| [`crates/fig-wal/src/segment.rs`](crates/fig-wal/src/segment.rs) (1 test) | Header + single-frame write/replay |
-| [`crates/fig-wal/src/wal.rs`](crates/fig-wal/src/wal.rs) (2 tests) | Dense seqnos across reopen, order preserved across rotation |
-| [`crates/fig-wal/tests/crash.rs`](crates/fig-wal/tests/crash.rs) (3 tests) | Acked prefix survives 20 seeded crash campaigns; mid-file corruption truncates the suffix; torn tails never replay |
-| [`crates/fig-storage/src/lib.rs`](crates/fig-storage/src/lib.rs) (3 tests) | Roundtrip, reopen replays the log, rejected writes leave no trace |
-| [`crates/fig-storage/tests/recovery.rs`](crates/fig-storage/tests/recovery.rs) (2 tests) | 15 seeded kill/restart campaigns preserve acked writes; torn tails never half-apply |
-| [`crates/fig-sstable/src/format.rs`](crates/fig-sstable/src/format.rs) (3 tests) | Record/index roundtrips with tombstones; truncation reads as corruption |
-| [`crates/fig-sstable/src/writer.rs`](crates/fig-sstable/src/writer.rs) (3 tests) | Out-of-order keys rejected, no overwrite, empty table finishes |
-| [`crates/fig-sstable/src/reader.rs`](crates/fig-sstable/src/reader.rs) (3 tests) | Get/scan/iter agree with tombstone suppression; garbage and bit flips fail safely |
-| [`crates/fig-sstable/tests/sstable.rs`](crates/fig-sstable/tests/sstable.rs) (2 tests) | 20 seeded streams match the oracle on gets, scans, tombstones |
-| [`crates/fig-storage/src/bloom.rs`](crates/fig-storage/src/bloom.rs) (3 tests) | No false negatives; false-positive rate under target |
-| [`crates/fig-storage/src/lsm.rs`](crates/fig-storage/src/lsm.rs) (3 tests) | Flush moves reads to tables; deletes shadow older tables; empty flush is a noop |
-| [`crates/fig-storage/src/manifest.rs`](crates/fig-storage/src/manifest.rs) (5 tests) | Manifest roundtrips; staging litter reaped; unlisted tables removed; corrupt manifest is `Corruption` |
-| [`crates/fig-storage/tests/lsm.rs`](crates/fig-storage/tests/lsm.rs) (2 tests) | Wide-key workloads match the oracle across flushes, kills, restarts |
-| [`crates/fig-storage/tests/crash_mid_flush.rs`](crates/fig-storage/tests/crash_mid_flush.rs) (4 tests) | SIGKILL litter at each flush window reopens clean; unlisted tables never leak; legacy dirs adopted |
-| [`crates/fig-storage/tests/compaction.rs`](crates/fig-storage/tests/compaction.rs) (6 tests) | Random compact/write/kill streams match the oracle; full-merge GC reclaims files; auto-policy bounds tables at 8; both compact crash windows reopen clean; inline-off + background-step contract |
-| [`crates/fig-server/tests/tcp.rs`](crates/fig-server/tests/tcp.rs) (6 tests) | Wire roundtrip incl. binary keys; garbage input rejected, connection survives; acked data survives full restart; 8 concurrent clients stay correct; background timer folds tables unaided |
-
-Run everything:
+## Quickstart
 
 ```bash
+cargo run -p fig-server --bin fig-server -- --dir /tmp/fig-srv --addr 127.0.0.1:7001
+cargo run -p fig-server --bin fig-cli -- put k1 v1
+cargo run -p fig-server --bin fig-cli -- get k1
 ./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
 ```
 
-Or scoped:
+Durability rule: a write is acked iff it sits at or before the last `sync`.
+Details: [docs/architecture/durability.md](docs/architecture/durability.md).
 
-```bash
-cargo test -p fig-core            # oracle + differential tests
-cargo test -p fig-wal            # unit tests
-cargo test -p fig-wal --test crash   # crash/restart gate (also its own CI job)
-cargo test -p fig-storage        # engine + kill/restart gate
-cargo test -p fig-sstable        # format, writer, reader, differential gate
-cargo test -p fig-server         # TCP wire gate (roundtrip, garbage, restart)
-```
-
-## Durability in one paragraph
-
-A write is acknowledged if and only if it sits at or before the last
-`Wal::sync()`. Recovery replays exactly that prefix — torn tails truncated,
-corrupt frames stop and truncate replay, sequence numbers stay dense. Details:
-[durability](docs/architecture/durability.md).
-
-## Repository map
+## Layout
 
 ```text
-crates/fig-core/    errors, config/limits, KV oracle, tracing
-crates/fig-wal/     the log (record / segment / wal) + crash tests
-crates/fig-storage/ memtable engine + LSM flush/merge + equivalence gates
-crates/fig-sstable/ immutable tables + indexed reads + differential tests
-crates/fig-server/  TCP JSON-lines server + fig-cli + wire tests
-docs/                   architecture, ADRs, correctness, benchmarks, testing
-scripts/check.sh        local gate: fmt + clippy + tests
-scripts/real_test.sh    real proof: HashMap harness + kill -9 + server restart
-.github/workflows/     ci.yml mirrors check.sh, plus the WAL crash gate
+crates/fig-core/     errors, config/limits, KV oracle, tracing
+crates/fig-wal/      checksummed log + crash tests
+crates/fig-storage/  memtable engine + LSM flush/merge + manifest
+crates/fig-sstable/  immutable tables + indexed reads
+crates/fig-server/   TCP server + fig-cli + fig-bench
+crates/fig-raft/     deterministic core + sim + crash-safe persistence
+docs/                architecture, ADRs, correctness, testing
 ```
 
-## Documentation
+## Docs
 
-Detailed architecture, implementation, verification, and technical
-documentation is available in the project documentation.
+Start with [docs/README.md](docs/README.md): [architecture](docs/architecture/overview.md) ·
+[status](docs/architecture/status.md) · [durability](docs/architecture/durability.md) ·
+[consistency](docs/architecture/consistency.md) · [correctness](docs/correctness/strategy.md) ·
+[testing](docs/testing/inventory.md) · [ADRs](docs/adr/README.md).
+Full manual: `make docs` (Asciidoctor; output in `build/docs/`), also published
+to [tmarhguy.github.io/figDB](https://tmarhguy.github.io/figDB/).
 
-Build it locally with `make docs` (requires
-[Asciidoctor](https://asciidoctor.org/); output goes to `build/docs/`),
-or read the GitHub Pages deployment of this repository.
+Commits look like `wal: ...`, `core: ...`, `docs: ...` — one piece of work each.
 
-## Documentation and history
+## License
 
-Start with [`docs/README.md`](docs/README.md). Important decisions get an ADR
-in [`docs/adr/`](docs/adr/). Commits look like `wal: ...`, `core: ...`,
-`docs: ...`, `chore: ...` — one piece of work each, so the history reads like
-the build went.
-
-## License and author
-
-Intended license: **MIT OR Apache-2.0** (matching `Cargo.toml`); license texts
-land before any public release. Infrastructure libraries only (Tokio, serde,
-tracing) — no embedded database engine.
+MIT OR Apache-2.0 (matching `Cargo.toml`); license texts land before any public
+release. Infrastructure libraries only (Tokio, serde, tracing) — no embedded
+database engine.
 
 Database architecture and project by **Tyrone Marhguy**.
