@@ -15,9 +15,12 @@ Each frame carries a checksum. Replay reads a prefix:
 
 [source,rust]
 ----
-pub fn append(&mut self, payload: &[u8]) -> Result<SeqNo>;
-pub fn sync(&mut self) -> Result<SyncPoint>;
-pub fn replay(prefix: &Path) -> Result<Vec<Record>>;
+Wal::open(&opts) -> (Wal, Vec<WalEntry>, RecoveryReport)
+wal.append_put(key: Vec<u8>, value: Vec<u8>) -> u64  // dense seqno
+wal.append_delete(key: Vec<u8>) -> u64
+wal.sync() -> ()                       // acknowledgement point
+wal.synced_seq() -> Option<u64>
+Segment::replay(path) -> (ReplayOut, u64)
 ----
 
 NOTE: Sequence numbers stay dense across reopen and rotation, so no write
@@ -30,10 +33,10 @@ Restart replays the log into a fresh table. Rejected writes leave no trace.
 
 ==== Flush and manifest publishing
 
-The live table set is defined by `tables/MANIFEST`, not the directory
-listing. Flush publishes in order: write `sst-{id}.sst.tmp`, sync,
-rename, directory fsync, update `MANIFEST` (tmp, sync, rename, directory
-fsync), then delete WAL segments.
+The live table set is defined by `tables/MANIFEST` (version 1), not the
+directory listing. Flush publishes in order: write `sst-000007.sst.tmp`
+(zero-padded 6-digit ids), sync, rename, directory fsync, update `MANIFEST`
+(`MANIFEST.tmp`, sync, rename, directory fsync), then delete WAL segments.
 
 ==== Crash windows
 
@@ -50,9 +53,10 @@ into reads.
 === SSTables and compaction
 
 Tables are immutable: checksummed blocks, an index, a footer, per-table
-Bloom filters, and tombstones for deletes. Compaction merges the oldest
-batch of tables with the same publish protocol as flush, so its crash
-windows reduce to the flush cases above.
+Bloom filters, and tombstones for deletes. When 8 tables accumulate, the
+oldest batch of 8 is merged (size-tiered oldest-batch policy) with the
+same publish protocol as flush, so compaction crash windows reduce to the
+flush cases above.
 
 Tombstone garbage collection runs only on full merges with an empty
 memtable, where no older layer can exist below a dropped tombstone, so a
