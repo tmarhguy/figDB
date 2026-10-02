@@ -1,4 +1,5 @@
 = FigDB Technical Reference Manual
+:author: Tyrone Marhguy
 :toc: left
 :toclevels: 3
 :sectnums:
@@ -9,24 +10,39 @@
 :imagesdir: images
 :stem: latexmath
 :experimental:
-:reproducible:
 
 // Project name and title are configured here (and only here).
 // The files under theme/ contain no project-specific names so they
 // can be copied unchanged into other repositories.
+// The build stamps the source commit ("Version <sha>") into the footer
+// via -a revnumber/-a revdate (see scripts/build-docs.sh).
 
 // NOTE on source highlighting: no :source-highlighter: is set on purpose,
 // so the only build dependency is Asciidoctor itself. To enable Rouge
 // highlighting, install the rouge gem and add `:source-highlighter: rouge`.
 
 This manual is the detailed technical reference for the project.
-For the concise project overview, see the root `README.md`.
-For design history and prose notes, see the Markdown files under
-`architecture/`, `adr/`, `correctness/`, `testing/`, and `benchmarks/`.
+It is the companion to the concise, GitHub-facing `README.md`:
 
-TIP: Chapters are assembled with `include::` directives below.
-To add, delete, rename, or reorder a chapter, edit one line in this file
-and add or remove the matching file under `sections/`.
+* `README.md` -- project identity, status, and quick start.
+* `docs/` (this manual) -- architecture, interfaces, verification, and
+  implementation detail in engineering-manual style.
+* `docs/architecture/`, `docs/adr/`, `docs/correctness/`, `docs/testing/`,
+  `docs/benchmarks/` -- prose notes, decision records, and measured
+  results, linked from the chapters below rather than duplicated.
+
+Conventions used throughout:
+
+* `monospace` marks commands, file paths, identifiers, and literals.
+* Unmeasured values are written as `TBD (unmeasured)` -- never estimated.
+* When prose and code disagree, the code plus its tests win until the
+  documentation is updated in the same milestone.
+
+TIP: Start with <<sec-introduction>> for scope and reading order,
+then <<sec-architecture>> for the system overview. Chapters are assembled
+with `include::` directives below: to add, delete, rename, or reorder a
+chapter, edit one line in this file and add or remove the matching file
+under `sections/`.
 Keep the blank lines between directives: a chapter ending in a list would
 otherwise swallow the next chapter's title.
 
