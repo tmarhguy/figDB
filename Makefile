@@ -6,6 +6,7 @@ docs:
 docs-clean:
 	rm -rf build/docs
 
-# Simple, portable preview: opens the built page in the default browser.
+# Serve the built manual locally (requires `make docs` first).
+# Uses only the Python standard library; no extra tooling.
 docs-open: docs
-	(open build/docs/index.html 2>/dev/null || xdg-open build/docs/index.html 2>/dev/null || true)
+	python3 -m http.server --directory build/docs 8000
