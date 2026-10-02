@@ -49,6 +49,11 @@ The local gate runs everything:
 ./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
 ----
 
+Two operational gates run outside `cargo test`: `fig-bench --verify-only`
+recomputes the oracle for a load run with zero shared state, and
+`scripts/soak.sh` repeats load/sync/SIGKILL/restart cycles, re-verifying
+every earlier cycle's keys after each restart.
+
 WARNING: Storage logic changes must update the corresponding gate in the
 same commit. A passing build with a weakened oracle is a regression, not
 an improvement.
