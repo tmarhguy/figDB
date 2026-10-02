@@ -29,14 +29,21 @@ Details: [docs/architecture/durability.md](docs/architecture/durability.md).
 
 ## Layout
 
-```text
-crates/fig-core/     errors, config/limits, KV oracle, tracing
-crates/fig-wal/      checksummed log + crash tests
-crates/fig-storage/  memtable engine + LSM flush/merge + manifest
-crates/fig-sstable/  immutable tables + indexed reads
-crates/fig-server/   TCP server + fig-cli + fig-bench
-crates/fig-raft/     deterministic core + sim + crash-safe persistence
-docs/                architecture, ADRs, correctness, testing
+```mermaid
+flowchart TB
+    clients["clients<br/>fig-cli / fig-bench<br/>TCP JSON-lines"]
+    server["fig-server<br/>put / get / delete / scan / sync<br/>flush / compact / stats"]
+    storage["fig-storage<br/>WAL-backed memtable → LSM<br/>MANIFEST publish + compaction"]
+    wal["fig-wal<br/>framed + checksummed<br/>append → sync = ack"]
+    sst["fig-sstable<br/>checksummed blocks + index<br/>tombstones + Bloom reads"]
+    raft["fig-raft<br/>deterministic core + sim<br/>crash-safe Store"]
+    core["fig-core<br/>errors / limits<br/>KV oracle + tracing"]
+
+    clients --> server --> storage
+    storage --> wal
+    storage --> sst
+    server -.->|R3 next: replicate before ack| raft
+    wal & sst & storage & server & raft --> core
 ```
 
 ## Docs
