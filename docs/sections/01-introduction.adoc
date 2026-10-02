@@ -50,9 +50,11 @@ The Markdown files already in this repository remain the canonical prose
 record. This manual summarizes them and links to them:
 
 * `architecture/overview.md` -- system topology and write lifecycle
+* `architecture/status.md` -- what is actually landed, crate by crate
 * `architecture/durability.md` -- acknowledgement rule and crash windows
 * `architecture/consistency.md` -- isolation target and validation
 * `adr/` -- architecture decision records
 * `correctness/strategy.md` -- reference models and testing strategy
 * `testing/strategy.md` -- simulator, chaos, soak, and CI split
+* `testing/inventory.md` -- what each test file proves
 * `benchmarks/` -- measured results only

@@ -13,6 +13,7 @@ crates/fig-wal/      the log (record / segment / wal) + crash tests
 crates/fig-storage/  memtable engine + LSM flush/merge + equivalence gates
 crates/fig-sstable/  immutable tables + indexed reads + differential tests
 crates/fig-server/   TCP JSON-lines server + fig-cli + wire tests
+crates/fig-raft/     deterministic core + sim + crash-safe persistence
 docs/                manual source (this system) + existing Markdown notes
 scripts/check.sh     local gate: fmt + clippy + tests
 ----

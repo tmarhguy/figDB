@@ -15,18 +15,6 @@ Honest status: single-node LSM + TCP server + Raft core through durability are
 landed and crash-tested. Server replication wiring and transactions are next,
 not here. Full inventory: [docs/architecture/status.md](docs/architecture/status.md).
 
-## Quickstart
-
-```bash
-cargo run -p fig-server --bin fig-server -- --dir /tmp/fig-srv --addr 127.0.0.1:7001
-cargo run -p fig-server --bin fig-cli -- put k1 v1
-cargo run -p fig-server --bin fig-cli -- get k1
-./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
-```
-
-Durability rule: a write is acked iff it sits at or before the last `sync`.
-Details: [docs/architecture/durability.md](docs/architecture/durability.md).
-
 ## Layout
 
 ```mermaid
@@ -45,6 +33,18 @@ flowchart TB
     server -.->|R3 next: replicate before ack| raft
     wal & sst & storage & server & raft --> core
 ```
+
+## Quickstart
+
+```bash
+cargo run -p fig-server --bin fig-server -- --dir /tmp/fig-srv --addr 127.0.0.1:7001
+cargo run -p fig-server --bin fig-cli -- put k1 v1
+cargo run -p fig-server --bin fig-cli -- get k1
+./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
+```
+
+Durability rule: a write is acked iff it sits at or before the last `sync`.
+Details: [docs/architecture/durability.md](docs/architecture/durability.md).
 
 ## Docs
 

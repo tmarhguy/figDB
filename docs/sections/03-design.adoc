@@ -61,3 +61,26 @@ flush cases above.
 Tombstone garbage collection runs only on full merges with an empty
 memtable, where no older layer can exist below a dropped tombstone, so a
 dropped tombstone can never resurrect a shadowed key.
+
+=== Raft consensus
+
+The core (`fig-raft::Node`) is a pure state machine: no I/O, no threads,
+no clock. Inputs are messages plus timer events; outputs are outbound
+messages plus committed entries. Elections, log matching
+(truncate-then-append, no holes), current-term commit advancement, and
+exactly-once in-order application all live here (R1; see ADR-006).
+
+Durability is explicit (R2). The core reports what changed via
+`take_dirty`; `persist::Store` writes `current_term`, `voted_for`, and the
+log to `raft-state.json` atomically (tmp, sync, rename, directory fsync)
+and replays it into `Node::restore` on restart. Heartbeats mark nothing
+dirty, so steady-state leadership costs no disk write. An uncommitted
+suffix may be overwritten by a new leader -- it is never applied before
+commit.
+
+A seeded simulation harness (virtual ticks, partitions, drops) proves
+single-leader election, ordered replication, failover preserving the
+committed prefix, and partition healing deterministically on fixed seeds.
+
+NOTE: The core is not yet wired to the server. Client writes still ack on
+`Wal::sync()` without replicating; majority-ack replication is R3.

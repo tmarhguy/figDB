@@ -40,6 +40,15 @@ NOTE: Randomized gates use fixed seeds so failures reproduce deterministically.
 
 |`fig-server/tests/tcp.rs`
 |Wire roundtrip, garbage-input survival, restart durability, concurrency
+
+|`fig-raft/tests/raft_sim.rs`
+|One leader per term on seeds; ordered replication; solo self-election;
+minority isolation; failover preserving the committed prefix
+
+|`fig-raft`: `persist`
+|Vote + entries survive reopen; heartbeats write nothing; tmp litter
+reaped, corrupt state is `Corruption`; uncommitted suffix never applied
+pre-commit
 |===
 
 The local gate runs everything:

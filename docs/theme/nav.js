@@ -4,56 +4,31 @@
  * without JS the full TOC renders and every anchor link works.
  * With JS, nodes with children get a disclosure button:
  * clicking the button (not the title link) expands/collapses.
+ *
+ * Behaviour (matches our other manuals):
+ * - The tree loads fully expanded on every visit: no minimized
+ *   default, no saved collapsed state.
+ * - "Collapse all" / "Expand all" controls sit above the list for
+ *   readers who want a shorter sidebar; toggling is session-local.
+ * - The hierarchy containing location.hash is auto-expanded on load
+ *   and on hash navigation (a no-op unless the reader collapsed it).
+ * - The scroll-spy highlights the current section only -- it never
+ *   expands or collapses entries.
  */
 (function () {
   'use strict';
 
   var TOC_ID = 'toc';
-  var STORAGE_KEY = 'project-docs.nav.v1';
   var COLLAPSED_CLASS = 'toc-collapsed';
   var ACTIVE_CLASS = 'toc-active';
-
-  // localStorage may throw (private mode, disabled cookies): fail open
-  // with an in-memory stub so navigation never breaks.
-  function loadState() {
-    try {
-      var raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch (e) {
-      return {};
-    }
-  }
-
-  function saveState(state) {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      /* non-fatal: collapse state simply won't persist */
-    }
-  }
-
-  // Stable key per collapsible node: the section anchor it links to.
-  function nodeKey(li) {
-    var link = li.querySelector(':scope > a[href^="#"]');
-    return link ? link.getAttribute('href') : null;
-  }
 
   function setCollapsed(li, toggle, collapsed) {
     li.classList.toggle(COLLAPSED_CLASS, collapsed);
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   }
 
-  function collectState(toc) {
-    var state = {};
-    toc.querySelectorAll('li.' + COLLAPSED_CLASS).forEach(function (li) {
-      var key = nodeKey(li);
-      if (key) state[key] = true;
-    });
-    return state;
-  }
-
-  // Auto-expand every ancestor of the current section so deep links and
-  // refreshes always reveal where the reader is.
+  // Auto-expand every ancestor of the current section so deep links
+  // always reveal where the reader is.
   function expandAncestorsOf(link) {
     var el = link;
     while (el) {
@@ -66,20 +41,30 @@
     }
   }
 
-  function markActive(toc, hash) {
-    toc.querySelectorAll('a.' + ACTIVE_CLASS).forEach(function (a) {
+  function linkFor(hash) {
+    if (!hash) return null;
+    // Guard the selector against quotes in section ids.
+    return document.querySelector(
+      '#' + TOC_ID + ' a[href="' + hash.replace(/"/g, '\\"') + '"]'
+    );
+  }
+
+  function setActive(link) {
+    document.querySelectorAll('#' + TOC_ID + ' a.' + ACTIVE_CLASS).forEach(function (a) {
       a.classList.remove(ACTIVE_CLASS);
     });
-    if (!hash) return;
-    // CSS.escape handles section ids with special characters.
-    var link = toc.querySelector('a[href="' + hash.replace(/"/g, '\\"') + '"]');
+    if (link) link.classList.add(ACTIVE_CLASS);
+  }
+
+  function revealHash(hash) {
+    var link = linkFor(hash);
     if (link) {
-      link.classList.add(ACTIVE_CLASS);
       expandAncestorsOf(link);
+      setActive(link);
     }
   }
 
-  function addToolbar(toc, state) {
+  function addToolbar(toc) {
     var bar = document.createElement('div');
     bar.className = 'toc-toolbar';
 
@@ -88,10 +73,8 @@
     collapseAll.textContent = 'Collapse all';
     collapseAll.addEventListener('click', function () {
       toc.querySelectorAll('li > button.toc-toggle').forEach(function (toggle) {
-        var li = toggle.parentElement;
-        setCollapsed(li, toggle, true);
+        setCollapsed(toggle.parentElement, toggle, true);
       });
-      saveState(collectState(toc));
     });
 
     var expandAll = document.createElement('button');
@@ -99,27 +82,23 @@
     expandAll.textContent = 'Expand all';
     expandAll.addEventListener('click', function () {
       toc.querySelectorAll('li > button.toc-toggle').forEach(function (toggle) {
-        var li = toggle.parentElement;
-        setCollapsed(li, toggle, false);
+        setCollapsed(toggle.parentElement, toggle, false);
       });
-      saveState(collectState(toc));
     });
 
     bar.appendChild(collapseAll);
     bar.appendChild(expandAll);
     toc.insertBefore(bar, toc.firstChild);
-    void state; // toolbar is stateless; persisted map stays authoritative
   }
 
   function init() {
     var toc = document.getElementById(TOC_ID);
     if (!toc) return;
 
-    var state = loadState();
-
     // Attach a disclosure button to every TOC node that has children.
     // The title link itself is untouched, so navigation still works
     // normally (click title = navigate; click arrow = expand/collapse).
+    // Initial state: always fully expanded.
     toc.querySelectorAll('li').forEach(function (li) {
       var childList = li.querySelector(':scope > ul, :scope > ol');
       if (!childList) return;
@@ -130,36 +109,31 @@
       toggle.type = 'button';
       toggle.className = 'toc-toggle';
       toggle.setAttribute('aria-label', 'Expand or collapse: ' + link.textContent.trim());
-
-      var key = nodeKey(li);
-      setCollapsed(li, toggle, !!(key && state[key]));
+      setCollapsed(li, toggle, false);
 
       toggle.addEventListener('click', function () {
-        var collapsed = li.classList.contains(COLLAPSED_CLASS);
-        setCollapsed(li, toggle, !collapsed);
-        saveState(collectState(toc));
+        setCollapsed(li, toggle, !li.classList.contains(COLLAPSED_CLASS));
       });
 
       li.insertBefore(toggle, link);
     });
 
-    addToolbar(toc, state);
+    addToolbar(toc);
 
-    // Reveal and highlight the current section on load and on navigation.
-    markActive(toc, window.location.hash);
-    if (window.location.hash) saveState(collectState(toc));
+    // Reveal and highlight the navigated-to section on load and on navigation.
+    revealHash(window.location.hash);
     window.addEventListener('hashchange', function () {
-      markActive(toc, window.location.hash);
-      saveState(collectState(toc));
+      revealHash(window.location.hash);
     });
 
-    // Subtly track the section in view while scrolling.
+    // Scroll-spy: highlight the section in view while scrolling.
+    // It never expands or collapses entries.
     if ('IntersectionObserver' in window) {
       var headings = document.querySelectorAll('#content [id]');
       var observer = new IntersectionObserver(
         function (entries) {
           entries.forEach(function (entry) {
-            if (entry.isIntersecting) markActive(toc, '#' + entry.target.id);
+            if (entry.isIntersecting) setActive(linkFor('#' + entry.target.id));
           });
         },
         { rootMargin: '0px 0px -70% 0px' }

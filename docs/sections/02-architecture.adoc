@@ -6,9 +6,12 @@ and the write lifecycle vocabulary used everywhere else in this manual.
 
 === System topology
 
-The target topology is a sharded, replicated store. Only the bottom of
-the storage engine exists today: it runs as a single-node process built
-from the layers in <<tab-components>>.
+The target topology is a sharded, replicated store. What exists today is
+the bottom of the storage engine running as a single-node process (the
+layers in <<tab-components>>), plus Raft consensus through durability:
+a deterministic core, a seeded simulation harness, and crash-safe
+persistence -- not yet wired to the server (R3). See ADR-006 for the
+R1/R2/R3 split.
 
 .Target write path (only the storage-engine boxes exist today).
 ----
@@ -48,6 +51,10 @@ image::write-path.svg[Implemented write path,600,align="center"]
 |Server and CLI
 |`fig-server`
 |TCP JSON-lines API; snapshot reads; background compaction timer
+
+|Raft consensus (unwired)
+|`fig-raft`
+|Deterministic core; seeded sim; crash-safe `Store`; R3 wiring is next
 |===
 
 === Write lifecycle vocabulary
