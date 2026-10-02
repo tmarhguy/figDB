@@ -7,34 +7,42 @@ durability contract in practice.
 
 === Basic write/read cycle
 
-. Connect to the server over TCP.
-. Send `put` requests, one JSON object per line (values base64 encoded).
-. Send `sync` to acknowledge the staged prefix.
-. Send `get` or `scan` to read from a snapshot.
-
-[source,json]
-----
-{"op":"put","key":"a2V5MQ==","value":"dmFsdWUx"}
-{"op":"sync"}
-{"op":"get","key":"a2V5MQ=="}
-----
-
-A minimal shell session against a local server:
+The fastest path is `fig-cli`, which takes raw UTF-8 strings and handles
+the base64 framing itself (arbitrary binary keys remain a client-library
+concern, not a shell concern):
 
 [source,bash]
 ----
-printf '%s\n' \
-  '{"op":"put","key":"a2V5MQ==","value":"dmFsdWUx"}' \
-  '{"op":"sync"}' \
-  '{"op":"get","key":"a2V5MQ=="}' | nc 127.0.0.1 7000
+fig-cli --addr 127.0.0.1:7001 put k1 v1
+fig-cli get k1
+fig-cli scan a z 100
+fig-cli stats
 ----
+
+The equivalent raw session over TCP (`fig-server` defaults to
+`127.0.0.1:7001`), one JSON object per line:
+
+[source,json]
+----
+{"seq":1,"op":"put","key_b64":"azE=","value_b64":"djE="}
+{"seq":2,"op":"sync"}
+{"seq":3,"op":"get","key_b64":"azE="}
+----
+
+In application terms the cycle is:
+
+. Connect to the server over TCP.
+. Send `put` requests, each tagged with a client-chosen `seq`.
+. Send `sync` to acknowledge the staged prefix.
+. Send `get` or `scan` to read from a snapshot; match responses to
+  requests by the echoed `seq`.
 
 === Errors
 
-All failures use shared error kinds (`fig-core::Error`): invalid input,
-limit violations, I/O failures, and corruption. Corruption is fail-safe:
-replay stops at the first corrupt frame and truncates the suffix rather
-than surfacing torn data.
+All failures use shared error kinds (`fig-core::Error`) surfaced on the
+wire as stable `code` strings: bad input is `INVALID_ARGUMENT`, a missing
+key is `NOT_FOUND`. Corruption is fail-safe: replay stops at the first
+corrupt frame and truncates the suffix rather than surfacing torn data.
 
 === Durability contract
 
