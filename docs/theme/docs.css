@@ -90,6 +90,64 @@
   padding-left: 0.4em;
 }
 
+#toc a {
+  border-left: 2px solid transparent;
+}
+
+/* --- Docs search box (injected by search.js; hidden without JS) -------- */
+.docs-search {
+  margin: 0.4em 0.75em 0.6em 0.75em;
+}
+
+.docs-search input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 0.85em;
+  padding: 0.4em 0.55em;
+}
+
+.docs-search input:focus {
+  border-color: #1a73e8;
+  outline: 2px solid #1a73e8;
+  outline-offset: 0;
+}
+
+.docs-search-results {
+  list-style: none;
+  margin: 0.3em 0 0 0;
+  padding: 0;
+  font-size: 0.85em;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.docs-search-results li a {
+  display: block;
+  padding: 0.25em 0.3em;
+  text-decoration: none;
+}
+
+.docs-search-results li a:hover {
+  text-decoration: underline;
+}
+
+.docs-search-empty {
+  color: #777;
+  font-size: 0.82em;
+  padding: 0.3em 0;
+}
+
+/* Filtered-out TOC entries while searching */
+#toc.toc-searching li.toc-no-match {
+  display: none;
+}
+
+#toc.toc-searching li.toc-match > a {
+  font-weight: bold;
+}
+
 /* --- Readability: dense but not cramped -------------------------------- */
 #content {
   max-width: 62em;
@@ -123,5 +181,31 @@
 
   body.toc2 #content {
     margin-left: 0;
+  }
+}
+
+/* --- Print: engineering-manual hard copy --------------------------------
+   Hide navigation chrome and force collapsed sections open so the
+   printout is complete. */
+@media print {
+  #toc.toc2,
+  .toc-toolbar,
+  .docs-search,
+  #toc .toc-toggle {
+    display: none !important;
+  }
+
+  #toc li.toc-collapsed > ul {
+    display: block !important;
+  }
+
+  body.toc2 #content {
+    margin-left: 0;
+    max-width: none;
+  }
+
+  #content a {
+    color: #111;
+    text-decoration: none;
   }
 }
