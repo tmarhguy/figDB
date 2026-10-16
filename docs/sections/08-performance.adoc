@@ -36,3 +36,22 @@ figures are reported separately in `benchmarks/`.
 
 NOTE: Concurrency figures are loopback-only unless stated otherwise, and
 no power-loss testing is claimed. See <<sec-limitations>>.
+
+=== Measured runs
+
+Recorded 2026-10-01 on an Apple M3, 16 GiB, rustc 1.98.1. Keys are 14 bytes
+and values are 64 bytes. `sync` runs every 500 puts. Full tables:
+`docs/benchmarks/README.md`.
+
+.Run C release throughput, background compaction
+image::throughput.svg[PUT and GET throughput for 1 and 8 clients,width=800]
+
+.p99 before and after moving compaction off the write path
+image::tail-latency.svg[p99 latency for inline compaction versus background compaction,width=800]
+
+Run B inline compaction, release, 60k keys: PUT 7,960/s (p99 1.74 ms) and
+GET 10,023/s. The same PUT on the debug build was 4,890/s. Run C, with
+merges off the write path, reaches 26,987 PUT/s at one client and
+59,315 PUT/s at eight. Eight-client GET is 96,013/s. Final compact leaves
+one 5.0 MB table, about 87 bytes per key, write amplification about 2.1x
+at this size.

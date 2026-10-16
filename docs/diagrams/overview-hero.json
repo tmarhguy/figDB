@@ -1,0 +1,24 @@
+{
+  "layout": "banner",
+  "title": "FigDB write path",
+  "subtitle": "Single-node engine today; sharded replication next.",
+  "rows": [
+    [
+      "Clients",
+      "CLIs and bench tools over TCP JSON-lines",
+      "fig-cli",
+      "fig-bench"
+    ],
+    [
+      "Storage engine",
+      "WAL-backed memtable into LSM tables",
+      "WAL sync = ack",
+      "flush + compact"
+    ],
+    [
+      "Consensus",
+      "Deterministic Raft core, simulation-tested",
+      "R3 wiring next"
+    ]
+  ]
+}

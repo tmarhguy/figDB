@@ -84,3 +84,14 @@ committed prefix, and partition healing deterministically on fixed seeds.
 
 NOTE: The core is not yet wired to the server. Client writes still ack on
 `Wal::sync()` without replicating; majority-ack replication is R3.
+
+=== Decision records
+
+The ADRs stay in `docs/adr/` rather than the chapter sidebar.
+
+* `docs/adr/001-memtable-structure.md`
+* `docs/adr/002-manifest-publishing.md`
+* `docs/adr/003-compaction-policy.md`
+* `docs/adr/004-tcp-server-protocol.md`
+* `docs/adr/005-concurrency-model.md`
+* `docs/adr/006-raft-replication.md`

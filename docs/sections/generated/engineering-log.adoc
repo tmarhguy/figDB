@@ -1,0 +1,15 @@
+[#engineering-log]
+== Engineering log
+
+Each note below is the original project log, in chronological order.
+Open the arrow in the sidebar to jump to an entry.
+
+[#log-2026-10-01-figdb-built-from-ground-level-up]
+=== 2026-10-01 — FigDB built from ground level up!
+
+++++
+<div class="log-entry">
+
+</div>
+++++
+

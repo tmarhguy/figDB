@@ -12,3 +12,4 @@ internal.md
 .env
 /log/.obsidian
 /build/
+__pycache__/

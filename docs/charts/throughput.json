@@ -1,0 +1,25 @@
+{
+  "title": "PUT and GET throughput",
+  "subtitle": "Run C, release build, background compaction, wall-clock ops/s",
+  "ylabel": "operations / second",
+  "categories": [
+    "1 client",
+    "8 clients"
+  ],
+  "series": [
+    {
+      "name": "PUT",
+      "values": [
+        26987,
+        59315
+      ]
+    },
+    {
+      "name": "GET",
+      "values": [
+        28471,
+        96013
+      ]
+    }
+  ]
+}

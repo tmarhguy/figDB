@@ -1,0 +1,24 @@
+{
+  "name": "FigDB",
+  "label": "Documentation",
+  "title": "A database written in Rust",
+  "description": "A database written in Rust, from the storage engine up. One server runs today. Replication and transactions are next.",
+  "url": "",
+  "image": "",
+  "about": "#about",
+  "repository": "https://github.com/tmarhguy/figDB",
+  "website": "",
+  "source": "https://github.com/tmarhguy/figDB/blob/main/docs/index.adoc",
+  "groups": {
+    "0": "Documentation",
+    "11": "Author"
+  },
+  "branch": "main",
+  "hero": null,
+  "accent": "#3f6212",
+  "accentDark": "#d9f99d",
+  "nested": [
+    "engineering-log"
+  ],
+  "logs": "log"
+}

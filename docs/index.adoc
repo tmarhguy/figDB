@@ -4,7 +4,9 @@
 :toclevels: 3
 :sectnums:
 :sectnumlevels: 3
-:icons: font
+:icons!:
+:stylesheet!:
+:webfonts!:
 :docinfo: shared
 :docinfodir: theme
 :imagesdir: images
@@ -21,30 +23,29 @@
 // so the only build dependency is Asciidoctor itself. To enable Rouge
 // highlighting, install the rouge gem and add `:source-highlighter: rouge`.
 
-This manual is the detailed technical reference for the project.
-It is the companion to the concise, GitHub-facing `README.md`:
+[#overview]
+[preface]
+== A database written in Rust
 
-* `README.md` -- project identity, status, and quick start.
-* `docs/` (this manual) -- architecture, interfaces, verification, and
-  implementation detail in engineering-manual style.
-* `docs/architecture/`, `docs/adr/`, `docs/correctness/`, `docs/testing/`,
-  `docs/benchmarks/` -- prose notes, decision records, and measured
-  results, linked from the chapters below rather than duplicated.
+FigDB is a database. The storage engine, the crash recovery, and the network protocol are written here, in Rust, instead of being borrowed from RocksDB, etcd, or a Raft library.
 
-Conventions used throughout:
+What runs today is one server. It keeps an on-disk log and sorted tables, and it speaks over TCP. That path is crash-tested. A write is acknowledged only after the log has been synced to disk. Copying data to other servers, and multi-statement transactions, are the next pieces. They are not in this tree yet.
 
-* `monospace` marks commands, file paths, identifiers, and literals.
-* Unmeasured values are written as `TBD (unmeasured)` -- never estimated.
-* When prose and code disagree, the code plus its tests win until the
-  documentation is updated in the same milestone.
+Start with <<sec-introduction,Introduction>>, then <<sec-architecture,Architecture>>. Measured numbers are in `benchmarks/`. Where this prose and the code disagree, the code and its tests win.
 
-TIP: Start with <<sec-introduction>> for scope and reading order,
-then <<sec-architecture>> for the system overview. Chapters are assembled
-with `include::` directives below: to add, delete, rename, or reorder a
-chapter, edit one line in this file and add or remove the matching file
-under `sections/`.
-Keep the blank lines between directives: a chapter ending in a list would
-otherwise swallow the next chapter's title.
+=== Quick start
+
+[source,bash]
+----
+cargo run -p fig-server --bin fig-server -- --dir /tmp/fig-srv --addr 127.0.0.1:7001
+cargo run -p fig-server --bin fig-cli -- put k1 v1
+cargo run -p fig-server --bin fig-cli -- get k1
+./scripts/check.sh   # fmt --check + clippy -D warnings + full test suite
+----
+
+++++
+<!-- docs-hero -->
+++++
 
 include::sections/01-introduction.adoc[]
 
@@ -63,3 +64,10 @@ include::sections/07-implementation.adoc[]
 include::sections/08-performance.adoc[]
 
 include::sections/09-limitations.adoc[]
+
+ifdef::has-logs[]
+include::sections/generated/engineering-log.adoc[]
+
+endif::[]
+
+include::theme/about.adoc[]

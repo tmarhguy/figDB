@@ -1,0 +1,25 @@
+{
+  "title": "p99 latency",
+  "subtitle": "60k keys, release. Run B compacts inline; Run C compacts in the background",
+  "ylabel": "milliseconds",
+  "categories": [
+    "Run B inline",
+    "Run C background"
+  ],
+  "series": [
+    {
+      "name": "PUT p99",
+      "values": [
+        1.74,
+        0.12
+      ]
+    },
+    {
+      "name": "GET p99",
+      "values": [
+        1.33,
+        0.11
+      ]
+    }
+  ]
+}

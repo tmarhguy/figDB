@@ -1,72 +1,96 @@
 #!/usr/bin/env bash
 # Build the static technical manual with Asciidoctor.
-# No system dependencies are installed here; a clear error is printed instead.
+# No dependency installation happens here; install Asciidoctor first:
+#   macOS:  brew install asciidoctor
+#   Linux:  sudo apt-get install -y asciidoctor   (or: gem install asciidoctor)
+#   Other:  gem install asciidoctor
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/docs/index.adoc"
-OUT="$ROOT/build/docs"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SRC="$REPO_ROOT/docs/index.adoc"
+OUT_DIR="$REPO_ROOT/build/docs"
+OUT_FILE="$OUT_DIR/index.html"
+
+cd "$REPO_ROOT"
 
 if ! command -v asciidoctor >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-ERROR: asciidoctor is not installed.
-
-Install the minimum dependency and retry:
-
-  macOS (Homebrew):  brew install asciidoctor
-  macOS (gem):       gem install asciidoctor
-  Debian/Ubuntu:     sudo apt-get install -y asciidoctor
-  Fedora:            sudo dnf install -y asciidoctor
-  Generic (Ruby):     gem install asciidoctor
-
-Then run: make docs
-EOF
+  echo "error: asciidoctor not found on PATH." >&2
+  echo "Install it first:" >&2
+  echo "  macOS:  brew install asciidoctor" >&2
+  echo "  Debian/Ubuntu: sudo apt-get install -y asciidoctor" >&2
+  echo "  RubyGems (any OS with Ruby): gem install asciidoctor" >&2
   exit 1
 fi
 
-mkdir -p "$OUT/theme" "$OUT/images"
-
-if [[ ! -f "$SRC" ]]; then
-  echo "ERROR: missing source $SRC" >&2
+if [ ! -f "$SRC" ]; then
+  echo "error: missing source $SRC" >&2
   exit 1
 fi
 
-# Version stamp in the footer ("Version <sha>" plus the build timestamp).
-# The sha is derived from git at build time and falls back to the build
-# date outside a git checkout. Passed as attributes so docs/index.adoc
-# stays free of hardcoded versions. (revdate is forwarded for converters
-# that honor it; the HTML5 footer renders the build time.)
-REVDATE="$(git -C "$ROOT" log -1 --format=%cs 2>/dev/null || date +%F)"
-REVNUM="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unversioned)"
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR/theme" "$OUT_DIR/images"
 
-# NOTE: no --safe-mode flag on purpose. Safe mode jails output inside the
-# document directory, which is incompatible with the required out-of-tree
-# build (generated HTML must not live under docs/). The inputs are this
-# repo's own sources, so the default unsafe mode is appropriate here.
-asciidoctor \
-  --backend html5 \
-  --attribute docinfo=shared \
-  --attribute revdate="$REVDATE" \
-  --attribute revnumber="$REVNUM" \
-  -D "$OUT" \
-  -o index.html \
-  "$SRC"
+python3 "$REPO_ROOT/scripts/ingest-logs.py"
+if [ -d "$REPO_ROOT/docs/diagrams" ]; then
+  python3 "$REPO_ROOT/scripts/render-docs-diagrams.py"
+fi
+if [ -d "$REPO_ROOT/docs/charts" ]; then
+  python3 "$REPO_ROOT/scripts/render-docs-charts.py"
+fi
+python3 "$REPO_ROOT/scripts/prepare-docs.py" head
 
-# Theme assets live beside the generated HTML (paths in docinfo.html
-# assume <output>/theme/...). docinfo.html itself is injected at build
-# time and is not needed at runtime.
-cp "$ROOT/docs/theme/docs.css" "$OUT/theme/docs.css"
-cp "$ROOT/docs/theme/nav.js" "$OUT/theme/nav.js"
-cp "$ROOT/docs/theme/search.js" "$OUT/theme/search.js"
+REVDATE="$(git -C "$REPO_ROOT" log -1 --format=%cs 2>/dev/null || date +%F)"
+REVNUM="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unversioned)"
 
-# Figures referenced via :imagesdir: images.
-if compgen -G "$ROOT/docs/images/*" >/dev/null; then
-  cp "$ROOT/docs/images/"* "$OUT/images/"
+DOCINFO_DIR="$(mktemp -d "$REPO_ROOT/docs/theme/.docinfo.XXXXXX")"
+trap 'rm -rf "$DOCINFO_DIR"' EXIT
+cp "$OUT_DIR/theme/docinfo.html" "$DOCINFO_DIR/docinfo.html"
+
+HAS_LOGS=0
+if [ -f "$REPO_ROOT/docs/sections/generated/engineering-log.adoc" ]; then
+  HAS_LOGS=1
 fi
 
-if [[ ! -s "$OUT/index.html" ]]; then
-  echo "ERROR: build produced no output at $OUT/index.html" >&2
-  exit 1
+if [ "$HAS_LOGS" -eq 1 ]; then
+  asciidoctor \
+    --failure-level WARN \
+    --backend html5 \
+    --safe-mode safe \
+    --attribute docinfo=shared \
+    --attribute docinfodir="$DOCINFO_DIR" \
+    --attribute revdate="$REVDATE" \
+    --attribute revnumber="$REVNUM" \
+    --attribute has-logs \
+    --out-file "$OUT_FILE" \
+    "$SRC"
+else
+  asciidoctor \
+    --failure-level WARN \
+    --backend html5 \
+    --safe-mode safe \
+    --attribute docinfo=shared \
+    --attribute docinfodir="$DOCINFO_DIR" \
+    --attribute revdate="$REVDATE" \
+    --attribute revnumber="$REVNUM" \
+    --out-file "$OUT_FILE" \
+    "$SRC"
 fi
 
-echo "Docs built: $OUT/index.html"
+for asset in docs.css nav.js search.js; do
+  cp "$REPO_ROOT/docs/theme/$asset" "$OUT_DIR/theme/$asset"
+done
+
+if [ -d "$REPO_ROOT/docs/images" ]; then
+  cp -R "$REPO_ROOT/docs/images/." "$OUT_DIR/images/"
+fi
+if [ -d "$REPO_ROOT/docs/assets" ]; then
+  cp "$REPO_ROOT/docs/assets/"*.* "$OUT_DIR/images/" 2>/dev/null || true
+fi
+
+python3 "$REPO_ROOT/scripts/prepare-docs.py" page
+if [ -f "$REPO_ROOT/docs/404.html" ]; then
+  python3 "$REPO_ROOT/scripts/prepare-docs.py" not-found
+fi
+python3 "$REPO_ROOT/scripts/export-docs-template.py"
+
+echo "Built $OUT_FILE"
